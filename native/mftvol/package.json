@@ -1,0 +1,9 @@
+{
+  "name": "mftvol",
+  "version": "0.1.0",
+  "private": true,
+  "main": "build/Release/mftvol.node",
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  }
+}

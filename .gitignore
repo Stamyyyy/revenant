@@ -3,3 +3,5 @@ dist/
 lib/test-out.txt
 lib/test-err.txt
 *.log
+native/*/build/
+native/*/node_modules/

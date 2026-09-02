@@ -1,0 +1,36 @@
+{
+  "name": "revenant",
+  "version": "0.1.0",
+  "description": "Instant whole-drive file search and an undo/recovery safety net, built on raw NTFS MFT indexing.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "Stam",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.stam.revenant",
+    "productName": "Revenant",
+    "win": {
+      "target": "nsis",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "lib/**/*",
+      "!lib/test-index.js"
+    ]
+  }
+}
