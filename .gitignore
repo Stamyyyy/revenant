@@ -1,0 +1,5 @@
+node_modules/
+dist/
+lib/test-out.txt
+lib/test-err.txt
+*.log
