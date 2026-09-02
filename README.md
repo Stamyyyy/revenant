@@ -1,14 +1,17 @@
 # Revenant
 
 Instant whole-drive file search, built on raw NTFS `$MFT` indexing (the same
-approach voidtools' Everything uses), plus a planned delete/edit safety net
-(see Roadmap). Part of the same family as Wraith and Specter.
+approach voidtools' Everything uses), staying live via the NTFS USN Journal,
+plus a planned delete/edit safety net (see Roadmap). Part of the same family
+as Wraith and Specter.
 
 ## Status
 
-Backend proven, UI works, not yet packaged or feature-complete. Currently:
-whole-drive search only. No live index updates yet (see below), no undo/
-recovery, no dual-pane browsing.
+Backend proven, UI works, index is live, not yet packaged or feature-complete.
+Search covers the whole drive and updates in real time as files are created,
+renamed, or deleted (~1s poll interval) — verified against real filesystem
+operations without restarting the app. No undo/recovery yet, no dual-pane
+browsing.
 
 ## Why this needs admin, unconditionally
 
@@ -64,15 +67,35 @@ Must be launched elevated (right-click → Run as administrator on the
 resulting exe, or an elevated terminal for `npm start`) — a UAC prompt is
 expected. Without elevation, the status bar will show an indexing error.
 
+## Live updates (USN Journal)
+
+`main.js` keeps one volume handle open for the app's lifetime and polls
+`FSCTL_READ_USN_JOURNAL` every ~1s (non-blocking — `Timeout=0`, so it never
+stalls the Electron main thread) via `native/mftvol`'s `readUsnJournal`.
+
+Important, counter-intuitive finding from actually testing this: **live
+updates do NOT re-read the changed record from `$MFT`.** The first version
+did, and it was wrong — measured directly, a raw volume read of a
+just-deleted record still showed it as in-use 4+ seconds after the delete,
+because NTFS lazily flushes MFT metadata to the blocks a raw volume handle
+actually sees, while the USN journal entry itself is written immediately as
+part of the transaction and has no such lag. So a delete reason is trusted
+the instant it's seen, and every other event's name/parent/isDirectory come
+straight from the journal record too. The one thing the journal doesn't
+carry is file size, so a live-updated entry keeps its last-known size until
+the next full rescan — a real but minor staleness next to a deleted file
+still showing up in results, which is what the first version actually did.
+
+`lib/mft.js` exports `debugRawRecord` for exactly this kind of "what does
+the disk actually say right now" check if this needs revisiting.
+
 ## Roadmap (see project chat history for full rationale)
 
-- **Live index updates** — the index is a one-shot snapshot right now; it
-  drifts from reality as files change until the app restarts. This needs
-  the NTFS USN Journal, which is also the same subsystem the undo/recovery
-  feature needs (it's what detects a file changed, in time to snapshot the
-  previous version) — design these together, not as two separate features.
 - **Delete/edit safety net** — 24h rolling recovery window for both deletes
   (route through a holding folder) and edits (snapshot on detected change).
+  The USN journal poll loop above is the same subsystem this needs for
+  detecting an edit in time to snapshot the previous version — extend it,
+  don't build a second one.
 - **Dual-pane browsing, tags, "open in Wraith here"** — see project notes.
 - **Packaging** — NSIS installer via `npm run dist` not yet verified for
   this project; `native/mftvol` needs to be included in `build.files` and

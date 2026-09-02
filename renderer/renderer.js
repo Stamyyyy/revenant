@@ -60,7 +60,16 @@ window.revenant.onIndexDone(({ error, stats }) => {
     return;
   }
   statusBar.className = 'ready';
-  statusBar.textContent = `${stats.recordCount.toLocaleString()} files/folders indexed in ${(stats.elapsedMs / 1000).toFixed(2)}s`;
+  statusBar.textContent = `${stats.recordCount.toLocaleString()} files/folders indexed in ${(stats.elapsedMs / 1000).toFixed(2)}s — live`;
   searchBox.disabled = false;
   searchBox.focus();
+});
+
+let liveFlashTimer = null;
+window.revenant.onIndexLiveUpdate(({ recordCount }) => {
+  statusBar.textContent = `${recordCount.toLocaleString()} files/folders indexed — live (just updated)`;
+  clearTimeout(liveFlashTimer);
+  liveFlashTimer = setTimeout(() => {
+    statusBar.textContent = `${recordCount.toLocaleString()} files/folders indexed — live`;
+  }, 1500);
 });
