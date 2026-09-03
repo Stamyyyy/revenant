@@ -107,7 +107,8 @@ function startIndexing() {
     indexingStats = {
       recordCount: driveIndex.size,
       totalRecords: layout.totalRecords,
-      elapsedMs: Date.now() - t0
+      elapsedMs: Date.now() - t0,
+      corruptRecords: scanResult.corruptRecords || 0
     };
     startSafetyNet();
     startLiveUpdates();
@@ -224,8 +225,25 @@ ipcMain.handle('open-in-wraith', (e, targetPath) => {
   } catch (err) {
     dir = path.dirname(targetPath); // path already gone — best effort at its last known parent
   }
-  execFile(wraithExe, [dir], { detached: true, windowsHide: false }, () => {});
-  return { ok: true };
+  return new Promise((resolve) => {
+    const child = execFile(wraithExe, [dir], { detached: true, windowsHide: false });
+    let settled = false;
+    child.once('error', (err) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, error: String(err && err.message || err) });
+    });
+    // Wraith is a detached, long-running GUI app — don't wait for it to
+    // exit, that could be hours. A spawn failure (missing exe, blocked by
+    // antivirus, etc.) surfaces via 'error' almost immediately; give that a
+    // short window, then treat silence as success.
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.unref();
+      resolve({ ok: true });
+    }, 300);
+  });
 });
 
 // Sidebar quick-access shortcuts — same set stock Explorer shows by default,

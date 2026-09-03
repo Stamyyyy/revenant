@@ -389,7 +389,8 @@ window.revenant.onIndexDone(async ({ error, stats }) => {
     return;
   }
   statusBar.className = 'ready';
-  statusBar.textContent = `${stats.recordCount.toLocaleString()} files/folders indexed in ${(stats.elapsedMs / 1000).toFixed(2)}s — live`;
+  const corruptNote = stats.corruptRecords ? ` (${stats.corruptRecords.toLocaleString()} corrupted record(s) skipped)` : '';
+  statusBar.textContent = `${stats.recordCount.toLocaleString()} files/folders indexed in ${(stats.elapsedMs / 1000).toFixed(2)}s — live${corruptNote}`;
   searchBox.disabled = false;
   knownFoldersCache = await window.revenant.knownFolders();
   await navigateTo(knownFoldersCache.desktop);
