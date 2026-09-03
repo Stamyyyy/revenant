@@ -11,5 +11,8 @@ contextBridge.exposeInMainWorld('revenant', {
   recoveryRestore: (id, destPath) => ipcRenderer.invoke('recovery-restore', { id, destPath }),
   openPath: (targetPath) => ipcRenderer.invoke('shell-open-path', targetPath),
   showInFolder: (targetPath) => ipcRenderer.invoke('shell-show-in-folder', targetPath),
-  copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text)
+  copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text),
+  settingsGet: () => ipcRenderer.invoke('settings-get'),
+  settingsAddFolder: () => ipcRenderer.invoke('settings-add-folder'),
+  settingsRemoveFolder: (folder) => ipcRenderer.invoke('settings-remove-folder', folder)
 });

@@ -4,6 +4,8 @@ const resultCount = document.getElementById('result-count');
 const results = document.getElementById('results');
 const recoveryTabBtn = document.getElementById('recovery-tab-btn');
 const recoveryPanel = document.getElementById('recovery-panel');
+const settingsTabBtn = document.getElementById('settings-tab-btn');
+const settingsPanel = document.getElementById('settings-panel');
 
 function humanSize(bytes) {
   if (!bytes) return '';
@@ -168,11 +170,52 @@ async function loadRecoveryPanel() {
   }
 }
 
-let recoveryActive = false;
+/* ================= settings panel ================= */
+async function loadSettingsPanel() {
+  settingsPanel.innerHTML = '<div class="empty">Loading…</div>';
+  const s = await window.revenant.settingsGet();
+  settingsPanel.innerHTML = `
+    <div class="settings-section">
+      <h3>Watched folders</h3>
+      <p class="settings-hint">Files changed or deleted in these folders (and their subfolders) are captured for 24h recovery. Everything else on the drive is searchable but not protected — watching the whole drive would mostly capture noise (build output, caches) nobody wants recovered.</p>
+      <div id="folder-list"></div>
+      <button id="add-folder-btn">+ Add folder…</button>
+    </div>
+  `;
+  const list = settingsPanel.querySelector('#folder-list');
+  for (const folder of s.watchedFolders) {
+    const row = document.createElement('div');
+    row.className = 'folder-row';
+    row.innerHTML = `<span class="folder-path">${folder.replace(/</g, '&lt;')}</span><button class="remove-btn">Remove</button>`;
+    row.querySelector('.remove-btn').addEventListener('click', async () => {
+      await window.revenant.settingsRemoveFolder(folder);
+      loadSettingsPanel();
+    });
+    list.appendChild(row);
+  }
+  settingsPanel.querySelector('#add-folder-btn').addEventListener('click', async () => {
+    await window.revenant.settingsAddFolder();
+    loadSettingsPanel();
+  });
+}
+
+/* ================= panel switching (search / recovery / settings) ================= */
+function setActivePanel(name) {
+  recoveryTabBtn.classList.toggle('active', name === 'recovery');
+  settingsTabBtn.classList.toggle('active', name === 'settings');
+  results.hidden = name !== 'search';
+  recoveryPanel.hidden = name !== 'recovery';
+  settingsPanel.hidden = name !== 'settings';
+  if (name === 'recovery') loadRecoveryPanel();
+  if (name === 'settings') loadSettingsPanel();
+}
+
+let activePanel = 'search';
 recoveryTabBtn.addEventListener('click', () => {
-  recoveryActive = !recoveryActive;
-  recoveryTabBtn.classList.toggle('active', recoveryActive);
-  results.hidden = recoveryActive;
-  recoveryPanel.hidden = !recoveryActive;
-  if (recoveryActive) loadRecoveryPanel();
+  activePanel = activePanel === 'recovery' ? 'search' : 'recovery';
+  setActivePanel(activePanel);
+});
+settingsTabBtn.addEventListener('click', () => {
+  activePanel = activePanel === 'settings' ? 'search' : 'settings';
+  setActivePanel(activePanel);
 });

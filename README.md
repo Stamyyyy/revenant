@@ -2,19 +2,21 @@
 
 Instant whole-drive file search, built on raw NTFS `$MFT` indexing (the same
 approach voidtools' Everything uses), staying live via the NTFS USN Journal,
-plus a 24h delete/edit recovery safety net for Desktop and Documents. Part
-of the same family as Wraith and Specter.
+plus a 24h delete/edit recovery safety net for user-chosen folders (Desktop
++ Documents by default). Part of the same family as Wraith and Specter.
 
 ## Status
 
 Backend proven, UI works, index is live, safety net works, results are
-actionable, not yet packaged. Search covers the whole drive and updates in
-real time as files are created, renamed, or deleted (~1s poll interval).
-Files changed or deleted in Desktop/Documents while Revenant is running are
-recoverable for 24h via the Recovery panel. Double-click a result to open
-it, right-click for Open / Show in Explorer / Copy path. All of the above
-verified against real filesystem operations end-to-end through the actual
-running UI, not just the backend. No dual-pane browsing yet.
+actionable, watched folders are configurable, not yet packaged. Search
+covers the whole drive and updates in real time as files are created,
+renamed, or deleted (~1s poll interval). Files changed or deleted in
+watched folders while Revenant is running are recoverable for 24h via the
+Recovery panel; which folders are watched is editable from the Settings
+panel and takes effect immediately, no restart. Double-click a result to
+open it, right-click for Open / Show in Explorer / Copy path. All of the
+above verified against real filesystem operations end-to-end through the
+actual running UI, not just the backend. No dual-pane browsing yet.
 
 ## Why this needs admin, unconditionally
 
@@ -94,10 +96,15 @@ the disk actually say right now" check if this needs revisiting.
 
 ## Delete/edit safety net (`lib/snapshots.js`)
 
-Watches Desktop + Documents only (v1 scope — snapshotting every write
-anywhere, build output and browser cache included, would be both wasteful
-and mostly noise nobody wants recovered). Reuses the same USN journal poll
-loop from live updates rather than a second watcher.
+Watches user-chosen folders only — Desktop + Documents by default, editable
+from the Settings panel (`lib/settings.js` persists to
+`<userData>/settings.json`) — not the whole drive, since snapshotting every
+write anywhere (build output, browser cache, game saves...) would be both
+wasteful and mostly noise nobody wants recovered. Reuses the same USN
+journal poll loop from live updates rather than a second watcher. A
+folder-list change takes effect on the very next poll tick — verified by
+removing a folder via the API and confirming a file written there right
+after was no longer captured, no restart needed.
 
 The non-obvious part, worth internalizing before touching this code: a
 snapshot is NOT taken reactively "of the old content" when a change is
@@ -120,9 +127,6 @@ restore the older one, confirm content matches v1 exactly — same for delete.
 ## Roadmap (see project chat history for full rationale)
 
 - **Dual-pane browsing, tags, "open in Wraith here"** — see project notes.
-- **Configurable watched folders** — Desktop/Documents are hardcoded in
-  `main.js` right now; a Settings panel to add/remove folders is the
-  obvious next step for the safety net specifically.
 - **Packaging** — NSIS installer via `npm run dist` not yet verified for
   this project; `native/mftvol` needs to be included in `build.files` and
   likely `asarUnpack`'d before that'll work (same pattern as `node-pty` in

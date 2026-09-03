@@ -35,7 +35,7 @@ html, body {
 #search-box:disabled { opacity: 0.5; }
 #result-count { color: #7a7a88; white-space: nowrap; }
 
-#recovery-tab-btn {
+#recovery-tab-btn, #settings-tab-btn {
   flex-shrink: 0;
   background: #1c1c24;
   border: 1px solid #33333f;
@@ -45,8 +45,34 @@ html, body {
   font-size: 12px;
   cursor: pointer;
 }
-#recovery-tab-btn:hover { background: #23232e; }
-#recovery-tab-btn.active { background: #2c2440; border-color: #5b3fff; color: #c9b8ff; }
+#recovery-tab-btn:hover, #settings-tab-btn:hover { background: #23232e; }
+#recovery-tab-btn.active, #settings-tab-btn.active { background: #2c2440; border-color: #5b3fff; color: #c9b8ff; }
+
+#settings-panel { padding: 4px 12px 12px; }
+.settings-section { margin-bottom: 20px; }
+.settings-section h3 { font-size: 12px; color: #9a9aa8; font-weight: 600; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.settings-hint { color: #7a7a88; font-size: 12px; margin: 0 0 10px; line-height: 1.5; }
+.folder-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  background: #1c1c24;
+  border: 1px solid #2a2a34;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.folder-row .folder-path { flex: 1; word-break: break-all; }
+.folder-row button.remove-btn {
+  background: transparent; border: 1px solid #4a2a2a; color: #d99;
+  border-radius: 4px; padding: 3px 9px; font-size: 11px; cursor: pointer; flex-shrink: 0;
+}
+.folder-row button.remove-btn:hover { background: #3a1e1e; }
+#add-folder-btn {
+  background: #2c2440; border: 1px solid #5b3fff; color: #c9b8ff;
+  border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer;
+}
+#add-folder-btn:hover { background: #3a2e58; }
 
 #results, #recovery-panel {
   flex: 1;

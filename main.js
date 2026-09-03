@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, clipboard, dialog } = require('electron');
 const path = require('path');
 const mft = require('./lib/mft');
 const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
+const { loadSettings, saveSettings } = require('./lib/settings');
 
 let win = null;
 
@@ -20,17 +21,23 @@ let usnCursor = null;
 let pollTimer = null;
 
 // ---- delete/edit safety net ----
-// v1 scope: Desktop + Documents only, not the whole drive — snapshotting
-// every write anywhere (build output, browser cache, game saves...) would
-// be both wasteful and mostly noise nobody wants recovered. Resolved to
-// lowercase absolute paths once at startup for cheap prefix checks below.
-let watchedFolders = [];
+// Watched folders are user-configurable (Settings panel), defaulting to
+// Desktop + Documents on first run — not the whole drive, since
+// snapshotting every write anywhere (build output, browser cache, game
+// saves...) would be both wasteful and mostly noise nobody wants recovered.
+let settings = null;
+let settingsPath = null;
+let watchedFoldersLower = []; // settings.watchedFolders, lowercased + trailing sep, recomputed whenever settings change — cheap prefix checks in the hot poll loop
 let snapshotStore = null;
 const debounceTimers = new Map(); // path -> Timeout, so a burst of writes to the same file snapshots once, not per-event
 
+function recomputeWatchedFoldersLower() {
+  watchedFoldersLower = settings.watchedFolders.map((p) => p.toLowerCase() + path.sep);
+}
+
 function isUnderWatchedFolder(filePath) {
   const lower = filePath.toLowerCase();
-  return watchedFolders.some((f) => lower.startsWith(f));
+  return watchedFoldersLower.some((f) => lower.startsWith(f));
 }
 
 function scheduleSnapshot(filePath) {
@@ -71,7 +78,11 @@ function startIndexing() {
 }
 
 function startSafetyNet() {
-  watchedFolders = [app.getPath('desktop'), app.getPath('documents')].map((p) => p.toLowerCase() + path.sep);
+  settingsPath = path.join(app.getPath('userData'), 'settings.json');
+  settings = loadSettings(settingsPath, {
+    watchedFolders: [app.getPath('desktop'), app.getPath('documents')]
+  });
+  recomputeWatchedFoldersLower();
   snapshotStore = createSnapshotStore(path.join(app.getPath('userData'), 'snapshots'));
   snapshotStore.purgeExpired();
   setInterval(() => snapshotStore.purgeExpired(), 60 * 60 * 1000);
@@ -167,6 +178,27 @@ ipcMain.handle('shell-show-in-folder', (e, targetPath) => {
 ipcMain.handle('clipboard-write-text', (e, text) => {
   clipboard.writeText(text);
   return { ok: true };
+});
+
+ipcMain.handle('settings-get', () => settings || { watchedFolders: [] });
+
+ipcMain.handle('settings-add-folder', async () => {
+  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
+  if (res.canceled || !res.filePaths[0]) return { ok: false, watchedFolders: settings.watchedFolders };
+  const folder = res.filePaths[0];
+  if (!settings.watchedFolders.some((f) => f.toLowerCase() === folder.toLowerCase())) {
+    settings.watchedFolders.push(folder);
+    saveSettings(settingsPath, settings);
+    recomputeWatchedFoldersLower();
+  }
+  return { ok: true, watchedFolders: settings.watchedFolders };
+});
+
+ipcMain.handle('settings-remove-folder', (e, folder) => {
+  settings.watchedFolders = settings.watchedFolders.filter((f) => f !== folder);
+  saveSettings(settingsPath, settings);
+  recomputeWatchedFoldersLower();
+  return { ok: true, watchedFolders: settings.watchedFolders };
 });
 
 function createWindow() {
