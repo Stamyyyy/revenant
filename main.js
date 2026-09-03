@@ -259,6 +259,65 @@ ipcMain.handle('known-folders', () => ({
   thisPC: 'C:\\'
 }));
 
+// This PC: every local drive with its label and used/free space, the way
+// Explorer's own "This PC" page shows it. Get-Volume gives the real label
+// and an accurate DriveType (so a coincidentally-present but empty
+// card reader doesn't show up as a 0-byte drive); it's asked for as a
+// single bound argument rather than piped, so ConvertTo-Json always
+// serializes an array even when there's exactly one volume.
+function listDrivesViaPowerShell() {
+  return new Promise((resolve, reject) => {
+    const script = "$vols = @(Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -ne 'CD-ROM' } | Select-Object DriveLetter,FileSystemLabel,Size,SizeRemaining,DriveType); ConvertTo-Json -InputObject $vols -Compress";
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 5000 }, (err, stdout) => {
+      if (err) { reject(err); return; }
+      try {
+        const parsed = JSON.parse(stdout);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        resolve(list.filter((v) => v && v.DriveLetter).map((v) => ({
+          letter: String(v.DriveLetter).toUpperCase(),
+          label: v.FileSystemLabel || '',
+          total: v.Size || 0,
+          free: v.SizeRemaining || 0,
+          removable: v.DriveType === 'Removable'
+        })));
+      } catch (e) { reject(e); }
+    });
+  });
+}
+
+// Fallback if PowerShell is unavailable/slow/blocked: no volume label, but
+// still real, accurate size/free-space numbers straight from the OS via
+// Node's own statfs — enough to render the same capacity bars.
+function listDrivesViaStatfs() {
+  const drives = [];
+  for (let code = 'C'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+    const letter = String.fromCharCode(code);
+    try {
+      const st = fs.statfsSync(`${letter}:\\`);
+      drives.push({
+        letter,
+        label: '',
+        total: st.bsize * st.blocks,
+        free: st.bsize * st.bavail,
+        removable: false
+      });
+    } catch (e) { /* drive letter not in use — skip */ }
+  }
+  return drives;
+}
+
+ipcMain.handle('list-drives', async () => {
+  try {
+    const drives = await listDrivesViaPowerShell();
+    if (drives.length > 0) return { drives };
+  } catch (e) { /* fall through to the pure-Node enumeration below */ }
+  try {
+    return { drives: listDrivesViaStatfs() };
+  } catch (e) {
+    return { drives: [], error: String(e && e.message || e) };
+  }
+});
+
 // Directory browsing: lists the direct children of a folder path (defaults
 // to the drive root). Breadcrumbs, double-click-to-descend, back/forward and
 // a typed address bar in the renderer all funnel through this one handler —

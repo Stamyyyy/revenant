@@ -11,6 +11,8 @@ const recoveryTabBtn = document.getElementById('recovery-tab-btn');
 const recoveryPanel = document.getElementById('recovery-panel');
 const settingsTabBtn = document.getElementById('settings-tab-btn');
 const settingsPanel = document.getElementById('settings-panel');
+const thispcTabBtn = document.getElementById('thispc-tab-btn');
+const thispcPanel = document.getElementById('thispc-panel');
 const backBtn = document.getElementById('nav-back');
 const forwardBtn = document.getElementById('nav-forward');
 const upBtn = document.getElementById('nav-up');
@@ -303,6 +305,12 @@ async function navigateTo(targetPath, opts = {}) {
   if (res.error) { flashMessage(res.error); return; }
   currentPath = res.path;
   searchBox.value = '';
+  // Navigating (from a sidebar shortcut, a drive tile, breadcrumb, etc.)
+  // always lands on the search/browse tab — without this, browsing from
+  // Recovery/Settings/This PC left that panel's own [hidden] untouched, so
+  // it stayed visible stacked above the newly-shown browse listing.
+  activePanel = 'search';
+  setActivePanel('search');
   results.hidden = true;
   browsePanel.hidden = false;
   renderBreadcrumb(currentPath);
@@ -493,11 +501,64 @@ async function loadSettingsPanel() {
   });
 }
 
+/* ================= This PC panel ================= */
+// A dedicated overview page, like Explorer's own This PC — every local
+// drive as a tile with a capacity bar, not just a shortcut into C:\.
+// Revenant's index (raw $MFT parsing, USN journal) is currently built for
+// C: only, so only the C: tile opens inside Revenant's own browse view;
+// every other drive hands off to the real Explorer via shell.openPath,
+// same as "Show in Explorer" does elsewhere in the app.
+async function loadThisPCPanel() {
+  thispcPanel.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await window.revenant.listDrives();
+  if (res.error && (!res.drives || res.drives.length === 0)) {
+    thispcPanel.innerHTML = `<div class="empty">${res.error.replace(/</g, '&lt;')}</div>`;
+    return;
+  }
+  if (!res.drives || res.drives.length === 0) {
+    thispcPanel.innerHTML = '<div class="empty">No drives found</div>';
+    return;
+  }
+  thispcPanel.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'drive-grid';
+  for (const d of res.drives) {
+    const used = Math.max(0, d.total - d.free);
+    const pctUsed = d.total > 0 ? (used / d.total) * 100 : 0;
+    const fillClass = pctUsed >= 90 ? 'crit' : pctUsed >= 75 ? 'warn' : '';
+    const tile = document.createElement('div');
+    tile.className = 'drive-tile';
+    const isIndexed = d.letter === 'C';
+    tile.innerHTML = `
+      <div class="drive-tile-top">
+        <span class="drive-icon">${d.removable ? '\u{1F5B4}\u{FE0F}' : '\u{1F4BE}'}</span>
+        <span class="drive-name">${(d.label || (d.removable ? 'Removable Disk' : 'Local Disk')).replace(/</g, '&lt;')} (${d.letter}:)</span>
+      </div>
+      <div class="drive-bar"><div class="drive-bar-fill ${fillClass}" style="width:${pctUsed.toFixed(1)}%"></div></div>
+      <div class="drive-meta">${humanSize(d.free)} free of ${humanSize(d.total)}${isIndexed ? '' : ' — opens in Explorer'}</div>
+    `;
+    tile.addEventListener('click', () => {
+      if (isIndexed) {
+        navigateTo(`${d.letter}:\\`);
+      } else {
+        // Revenant only indexes C: (single-volume raw MFT scan) — every
+        // other drive is real and browsable, just not through Revenant's
+        // own view, so hand off to the OS's own file browser instead of
+        // showing an empty/broken listing.
+        window.revenant.openPath(`${d.letter}:\\`);
+      }
+    });
+    grid.appendChild(tile);
+  }
+  thispcPanel.appendChild(grid);
+}
+
 /* ================= panel switching (search+browse / recovery / settings) ================= */
 function setActivePanel(name) {
   recentTabBtn.classList.toggle('active', name === 'recent');
   recoveryTabBtn.classList.toggle('active', name === 'recovery');
   settingsTabBtn.classList.toggle('active', name === 'settings');
+  thispcTabBtn.classList.toggle('active', name === 'thispc');
   const isSearchTab = name === 'search';
   addressBar.hidden = !isSearchTab;
   listHead.hidden = !(isSearchTab || name === 'recent');
@@ -507,9 +568,11 @@ function setActivePanel(name) {
   recentPanel.hidden = name !== 'recent';
   recoveryPanel.hidden = name !== 'recovery';
   settingsPanel.hidden = name !== 'settings';
+  thispcPanel.hidden = name !== 'thispc';
   if (name === 'recent') loadRecentPanel();
   if (name === 'recovery') loadRecoveryPanel();
   if (name === 'settings') loadSettingsPanel();
+  if (name === 'thispc') loadThisPCPanel();
 }
 
 let activePanel = 'search';
@@ -523,5 +586,9 @@ recoveryTabBtn.addEventListener('click', () => {
 });
 settingsTabBtn.addEventListener('click', () => {
   activePanel = activePanel === 'settings' ? 'search' : 'settings';
+  setActivePanel(activePanel);
+});
+thispcTabBtn.addEventListener('click', () => {
+  activePanel = activePanel === 'thispc' ? 'search' : 'thispc';
   setActivePanel(activePanel);
 });

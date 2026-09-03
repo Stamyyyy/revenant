@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('revenant', {
   browseList: (targetPath) => ipcRenderer.invoke('browse-list', targetPath),
   recentFiles: () => ipcRenderer.invoke('recent-files'),
   knownFolders: () => ipcRenderer.invoke('known-folders'),
+  listDrives: () => ipcRenderer.invoke('list-drives'),
   openInWraith: (targetPath) => ipcRenderer.invoke('open-in-wraith', targetPath),
   indexStatus: () => ipcRenderer.invoke('index-status'),
   onIndexProgress: (cb) => ipcRenderer.on('index-progress', (_e, data) => cb(data)),
