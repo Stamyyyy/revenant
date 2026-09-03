@@ -132,3 +132,19 @@ html, body {
 .row .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .size { flex-shrink: 0; color: #7a7a88; font-size: 11px; }
 .empty { color: #55555f; padding: 24px; text-align: center; }
+
+.tag-pills { display: flex; gap: 4px; flex-shrink: 0; }
+.tag-pill {
+  background: #2c2440; border: 1px solid #4a3a70; color: #c9b8ff;
+  border-radius: 10px; padding: 1px 7px; font-size: 10px;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.tag-pill .tag-remove { cursor: pointer; opacity: 0.6; }
+.tag-pill .tag-remove:hover { opacity: 1; }
+
+#ctx-menu #tag-input {
+  width: 100%;
+  background: #14141a; border: 1px solid #5b3fff; border-radius: 4px;
+  color: #e6e6ea; padding: 6px 8px; font-size: 12px; outline: none;
+  box-sizing: border-box;
+}

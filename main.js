@@ -3,6 +3,7 @@ const path = require('path');
 const mft = require('./lib/mft');
 const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
 const { loadSettings, saveSettings } = require('./lib/settings');
+const { createTagStore } = require('./lib/tags');
 
 let win = null;
 
@@ -30,6 +31,7 @@ let settingsPath = null;
 let watchedFoldersLower = []; // settings.watchedFolders, lowercased + trailing sep, recomputed whenever settings change — cheap prefix checks in the hot poll loop
 let snapshotStore = null;
 const debounceTimers = new Map(); // path -> Timeout, so a burst of writes to the same file snapshots once, not per-event
+let tagStore = null;
 
 function recomputeWatchedFoldersLower() {
   watchedFoldersLower = settings.watchedFolders.map((p) => p.toLowerCase() + path.sep);
@@ -86,6 +88,7 @@ function startSafetyNet() {
   snapshotStore = createSnapshotStore(path.join(app.getPath('userData'), 'snapshots'));
   snapshotStore.purgeExpired();
   setInterval(() => snapshotStore.purgeExpired(), 60 * 60 * 1000);
+  tagStore = createTagStore(path.join(app.getPath('userData'), 'tags.json'));
 }
 
 function startLiveUpdates() {
@@ -126,10 +129,28 @@ app.on('before-quit', () => {
 
 ipcMain.handle('search-query', (e, query) => {
   if (!driveIndex) return { error: indexError || 'index not ready' };
-  if (!query || !query.trim()) return { results: [] };
-  const results = mft.search(driveIndex, query.trim(), 'C', 200);
+  const q = (query || '').trim();
+  if (!q) return { results: [] };
+
+  let results;
+  if (q.startsWith('#') && q.length > 1) {
+    // Tag search: exact tag match, not substring — tags are a small,
+    // deliberately-chosen set per file, not free text to fuzzy-match.
+    const tag = q.slice(1);
+    const { results: r, staleFileIds } = mft.resultsForFileIds(driveIndex, tagStore.fileIdsForTag(tag), 'C', 200);
+    if (staleFileIds.length) tagStore.dropStale(staleFileIds);
+    results = r;
+  } else {
+    results = mft.search(driveIndex, q, 'C', 200);
+  }
+
+  for (const r of results) r.tags = tagStore.getTags(r.fileId);
   return { results };
 });
+
+ipcMain.handle('tags-add', (e, { fileId, tag }) => ({ tags: tagStore.addTag(fileId, tag) }));
+ipcMain.handle('tags-remove', (e, { fileId, tag }) => ({ tags: tagStore.removeTag(fileId, tag) }));
+ipcMain.handle('tags-all', () => ({ tags: tagStore.allTags() }));
 
 ipcMain.handle('index-status', () => {
   if (indexError) return { error: indexError };

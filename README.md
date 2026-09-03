@@ -3,19 +3,21 @@
 Instant whole-drive file search, built on raw NTFS `$MFT` indexing (the same
 approach voidtools' Everything uses), staying live via the NTFS USN Journal,
 plus a 24h delete/edit recovery safety net for user-chosen folders (Desktop
-+ Documents by default). Part of the same family as Wraith and Specter.
++ Documents by default), and tags. Part of the same family as Wraith and
+Specter.
 
 ## Status
 
 Backend proven, UI works, index is live, safety net works, results are
-actionable, watched folders are configurable, not yet packaged. Search
-covers the whole drive and updates in real time as files are created,
-renamed, or deleted (~1s poll interval). Files changed or deleted in
-watched folders while Revenant is running are recoverable for 24h via the
-Recovery panel; which folders are watched is editable from the Settings
+actionable, watched folders are configurable, tags work, not yet packaged.
+Search covers the whole drive and updates in real time as files are
+created, renamed, or deleted (~1s poll interval). Files changed or deleted
+in watched folders while Revenant is running are recoverable for 24h via
+the Recovery panel; which folders are watched is editable from the Settings
 panel and takes effect immediately, no restart. Double-click a result to
-open it, right-click for Open / Show in Explorer / Copy path. All of the
-above verified against real filesystem operations end-to-end through the
+open it, right-click for Open / Show in Explorer / Copy path / Add tag —
+tagged files are searchable with `#tagname`. All of the above verified
+against real filesystem operations end-to-end through the
 actual running UI, not just the backend. No dual-pane browsing yet.
 
 ## Why this needs admin, unconditionally
@@ -124,9 +126,33 @@ recovery (restore an older version over a bad edit) and delete recovery
 the real running UI: write v1, overwrite to v2, confirm 2 versions tracked,
 restore the older one, confirm content matches v1 exactly — same for delete.
 
+## Tags (`lib/tags.js`)
+
+Keyed by `fileId` — `"recordNum:seq"`, not path and not bare recordNum.
+This mattered enough to fix before building tags at all: NTFS reuses a
+freed MFT slot for a completely unrelated future file once the original is
+deleted, so a tag keyed on recordNum alone could silently reattach itself
+to some other file later. `(recordNum, sequenceNumber)` together is the
+actual stable identity NTFS itself uses (the same pairing is packed into
+every `$FILE_NAME` reference and every USN journal record's
+`FileReferenceNumber`), so that's what `mft.js`'s `parseRecord` and
+`decodeUsnRecords` both now extract and carry through the index. Search
+results that reference a stale fileId (the record now holds a different
+seq than the tag was set against) get dropped and the orphaned tag is
+garbage-collected, rather than either resurfacing on the wrong file or
+accumulating forever.
+
+`#tagname` in the search box does an exact tag search instead of a name
+match. Right-click a result → Add tag… for a themed inline input (Electron
+doesn't reliably support `window.prompt()`, so this isn't a native dialog).
+Verified via real DOM interaction end-to-end: add a tag through the actual
+context menu, confirm the pill survives a fresh re-search (proves it's
+persisted, not just closure state), search `#tagname` and find it, remove
+via the pill's ×, confirm the tag search comes back empty.
+
 ## Roadmap (see project chat history for full rationale)
 
-- **Dual-pane browsing, tags, "open in Wraith here"** — see project notes.
+- **Dual-pane browsing, "open in Wraith here"** — see project notes.
 - **Packaging** — NSIS installer via `npm run dist` not yet verified for
   this project; `native/mftvol` needs to be included in `build.files` and
   likely `asarUnpack`'d before that'll work (same pattern as `node-pty` in

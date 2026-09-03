@@ -14,5 +14,8 @@ contextBridge.exposeInMainWorld('revenant', {
   copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text),
   settingsGet: () => ipcRenderer.invoke('settings-get'),
   settingsAddFolder: () => ipcRenderer.invoke('settings-add-folder'),
-  settingsRemoveFolder: (folder) => ipcRenderer.invoke('settings-remove-folder', folder)
+  settingsRemoveFolder: (folder) => ipcRenderer.invoke('settings-remove-folder', folder),
+  tagsAdd: (fileId, tag) => ipcRenderer.invoke('tags-add', { fileId, tag }),
+  tagsRemove: (fileId, tag) => ipcRenderer.invoke('tags-remove', { fileId, tag }),
+  tagsAll: () => ipcRenderer.invoke('tags-all')
 });

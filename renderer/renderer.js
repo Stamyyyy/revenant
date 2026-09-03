@@ -15,6 +15,22 @@ function humanSize(bytes) {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
+function renderTagPills(container, r) {
+  container.innerHTML = '';
+  for (const t of (r.tags || [])) {
+    const pill = document.createElement('span');
+    pill.className = 'tag-pill';
+    pill.innerHTML = `#${t.replace(/</g, '&lt;')} <span class="tag-remove">×</span>`;
+    pill.querySelector('.tag-remove').addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const res = await window.revenant.tagsRemove(r.fileId, t);
+      r.tags = res.tags;
+      renderTagPills(container, r);
+    });
+    container.appendChild(pill);
+  }
+}
+
 function renderResults(list) {
   results.innerHTML = '';
   if (list.length === 0) {
@@ -30,12 +46,14 @@ function renderResults(list) {
     row.innerHTML = `
       <span class="tag">${r.isDirectory ? 'dir' : 'file'}</span>
       <span class="path">${r.path.replace(/</g, '&lt;')}</span>
+      <span class="tag-pills"></span>
       <span class="size">${humanSize(r.size)}</span>
     `;
+    renderTagPills(row.querySelector('.tag-pills'), r);
     row.addEventListener('dblclick', () => window.revenant.openPath(r.path));
     row.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
-      showContextMenu(ev.clientX, ev.clientY, r);
+      showContextMenu(ev.clientX, ev.clientY, r, row.querySelector('.tag-pills'));
     });
     frag.appendChild(row);
   }
@@ -59,18 +77,31 @@ document.addEventListener('click', hideContextMenu);
 document.addEventListener('scroll', hideContextMenu, true);
 window.addEventListener('blur', hideContextMenu);
 
-function showContextMenu(x, y, r) {
+function showContextMenu(x, y, r, tagPillsEl) {
   const items = [
     { label: r.isDirectory ? 'Open folder' : 'Open', action: () => window.revenant.openPath(r.path) },
     { label: 'Show in Explorer', action: () => window.revenant.showInFolder(r.path) },
-    { label: 'Copy path', action: () => window.revenant.copyText(r.path).then(() => flashMessage('Path copied')) }
+    { label: 'Copy path', action: () => window.revenant.copyText(r.path).then(() => flashMessage('Path copied')) },
+    {
+      label: 'Add tag…',
+      // Doesn't close the menu or fire immediately — swaps the menu content
+      // into a tag-name input instead. window.prompt() isn't reliably
+      // available in Electron, and a themed inline input fits the app
+      // better anyway.
+      keepOpen: true,
+      action: () => showTagInput(tagPillsEl, r)
+    }
   ];
   ctxMenu.innerHTML = '';
   for (const item of items) {
     const el = document.createElement('div');
     el.className = 'ctx-item';
     el.textContent = item.label;
-    el.addEventListener('click', () => { item.action(); hideContextMenu(); });
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      item.action();
+      if (!item.keepOpen) hideContextMenu();
+    });
     ctxMenu.appendChild(el);
   }
   ctxMenu.hidden = false;
@@ -78,6 +109,24 @@ function showContextMenu(x, y, r) {
   const rect = ctxMenu.getBoundingClientRect();
   ctxMenu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
   ctxMenu.style.top = `${Math.min(y, window.innerHeight - rect.height - 4)}px`;
+}
+
+function showTagInput(tagPillsEl, r) {
+  ctxMenu.innerHTML = '<input type="text" id="tag-input" placeholder="tag name, Enter to add">';
+  const input = ctxMenu.querySelector('#tag-input');
+  input.addEventListener('click', (ev) => ev.stopPropagation());
+  input.addEventListener('keydown', async (ev) => {
+    if (ev.key === 'Escape') { hideContextMenu(); return; }
+    if (ev.key !== 'Enter') return;
+    const tag = input.value.trim();
+    if (tag) {
+      const res = await window.revenant.tagsAdd(r.fileId, tag);
+      r.tags = res.tags;
+      renderTagPills(tagPillsEl, r);
+    }
+    hideContextMenu();
+  });
+  input.focus();
 }
 
 let debounceTimer = null;
