@@ -2,6 +2,8 @@ const statusBar = document.getElementById('status-bar');
 const searchBox = document.getElementById('search-box');
 const resultCount = document.getElementById('result-count');
 const results = document.getElementById('results');
+const recoveryTabBtn = document.getElementById('recovery-tab-btn');
+const recoveryPanel = document.getElementById('recovery-panel');
 
 function humanSize(bytes) {
   if (!bytes) return '';
@@ -72,4 +74,60 @@ window.revenant.onIndexLiveUpdate(({ recordCount }) => {
   liveFlashTimer = setTimeout(() => {
     statusBar.textContent = `${recordCount.toLocaleString()} files/folders indexed — live`;
   }, 1500);
+});
+
+/* ================= recovery panel ================= */
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+async function doRestore(id, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Restoring…';
+  const res = await window.revenant.recoveryRestore(id);
+  btn.textContent = res.ok ? 'Restored ✓' : `Failed: ${res.error}`;
+  if (res.ok) setTimeout(() => loadRecoveryPanel(), 800);
+}
+
+async function loadRecoveryPanel() {
+  recoveryPanel.innerHTML = '<div class="empty">Loading…</div>';
+  const { files } = await window.revenant.recoveryList();
+  if (!files || files.length === 0) {
+    recoveryPanel.innerHTML = '<div class="empty">Nothing recovered yet. Files changed or deleted in Desktop/Documents while Revenant is running show up here, recoverable for 24h.</div>';
+    return;
+  }
+  recoveryPanel.innerHTML = '';
+  for (const f of files) {
+    const { history } = await window.revenant.recoveryHistory(f.originalPath);
+    const item = document.createElement('div');
+    item.className = 'recovery-item';
+    const versionsHtml = history.map((v, i) => `
+      <div class="version-row">
+        <span class="when">${timeAgo(v.snapshotAt)}</span>
+        <span>${i === 0 ? 'latest captured version' : 'earlier version'}</span>
+        <button class="restore-btn" data-id="${v.id}">Restore this</button>
+      </div>
+    `).join('');
+    item.innerHTML = `
+      <div class="path">${f.originalPath.replace(/</g, '&lt;')}</div>
+      <div class="meta">${history.length} version${history.length === 1 ? '' : 's'} kept, last change ${timeAgo(f.snapshotAt)}</div>
+      <div class="versions">${versionsHtml}</div>
+    `;
+    item.querySelectorAll('.restore-btn').forEach((btn) => {
+      btn.addEventListener('click', () => doRestore(btn.dataset.id, btn));
+    });
+    recoveryPanel.appendChild(item);
+  }
+}
+
+let recoveryActive = false;
+recoveryTabBtn.addEventListener('click', () => {
+  recoveryActive = !recoveryActive;
+  recoveryTabBtn.classList.toggle('active', recoveryActive);
+  results.hidden = recoveryActive;
+  recoveryPanel.hidden = !recoveryActive;
+  if (recoveryActive) loadRecoveryPanel();
 });

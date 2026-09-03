@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const mft = require('./lib/mft');
+const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
 
 let win = null;
 
@@ -18,6 +19,29 @@ let journalId = null;
 let usnCursor = null;
 let pollTimer = null;
 
+// ---- delete/edit safety net ----
+// v1 scope: Desktop + Documents only, not the whole drive — snapshotting
+// every write anywhere (build output, browser cache, game saves...) would
+// be both wasteful and mostly noise nobody wants recovered. Resolved to
+// lowercase absolute paths once at startup for cheap prefix checks below.
+let watchedFolders = [];
+let snapshotStore = null;
+const debounceTimers = new Map(); // path -> Timeout, so a burst of writes to the same file snapshots once, not per-event
+
+function isUnderWatchedFolder(filePath) {
+  const lower = filePath.toLowerCase();
+  return watchedFolders.some((f) => lower.startsWith(f));
+}
+
+function scheduleSnapshot(filePath) {
+  const existing = debounceTimers.get(filePath);
+  if (existing) clearTimeout(existing);
+  debounceTimers.set(filePath, setTimeout(() => {
+    debounceTimers.delete(filePath);
+    snapshotStore.snapshotFile(filePath);
+  }, DEBOUNCE_MS));
+}
+
 function startIndexing() {
   const t0 = Date.now();
   try {
@@ -33,6 +57,7 @@ function startIndexing() {
       totalRecords: layout.totalRecords,
       elapsedMs: Date.now() - t0
     };
+    startSafetyNet();
     startLiveUpdates();
   } catch (err) {
     // Most likely cause: the app isn't running elevated. Raw volume access
@@ -45,14 +70,34 @@ function startIndexing() {
   }
 }
 
+function startSafetyNet() {
+  watchedFolders = [app.getPath('desktop'), app.getPath('documents')].map((p) => p.toLowerCase() + path.sep);
+  snapshotStore = createSnapshotStore(path.join(app.getPath('userData'), 'snapshots'));
+  snapshotStore.purgeExpired();
+  setInterval(() => snapshotStore.purgeExpired(), 60 * 60 * 1000);
+}
+
 function startLiveUpdates() {
   const journal = mft.ensureUsnJournal(volumeHandle);
   journalId = journal.journalId;
   usnCursor = journal.nextUsn; // only care about changes from this point on — the scan above already reflects everything before it
   pollTimer = setInterval(() => {
     try {
-      const { nextUsn, changedCount } = mft.pollUsnJournal(volumeHandle, layout, journalId, usnCursor, driveIndex);
+      const { nextUsn, changedCount, records } = mft.pollUsnJournal(volumeHandle, layout, journalId, usnCursor, driveIndex);
       usnCursor = nextUsn;
+
+      // Safety net: for anything that changed (not deleted — nothing to
+      // read there) and resolves under a watched folder, debounce a
+      // snapshot of its current content. Deletes need no action here; the
+      // most recent snapshot already on file (from whenever this file was
+      // last edited while it existed) is already the recovery point.
+      for (const rec of records) {
+        if (rec.isDirectory) continue;
+        const currentPath = mft.resolvePath(driveIndex, rec.recordNum, 'C');
+        if (!currentPath || !isUnderWatchedFolder(currentPath)) continue;
+        scheduleSnapshot(currentPath);
+      }
+
       if (changedCount > 0 && win && !win.isDestroyed()) {
         win.webContents.send('index-live-update', { changedCount, recordCount: driveIndex.size });
       }
@@ -79,6 +124,25 @@ ipcMain.handle('index-status', () => {
   if (indexError) return { error: indexError };
   if (!driveIndex) return { indexing: true };
   return { stats: indexingStats };
+});
+
+ipcMain.handle('recovery-list', () => {
+  if (!snapshotStore) return { files: [] };
+  return { files: snapshotStore.listTrackedFiles() };
+});
+
+ipcMain.handle('recovery-history', (e, originalPath) => {
+  if (!snapshotStore) return { history: [] };
+  return { history: snapshotStore.historyForPath(originalPath) };
+});
+
+ipcMain.handle('recovery-restore', (e, { id, destPath }) => {
+  try {
+    const restoredTo = snapshotStore.restore(id, destPath);
+    return { ok: true, restoredTo };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
 });
 
 function createWindow() {

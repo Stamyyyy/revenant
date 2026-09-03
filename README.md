@@ -2,16 +2,18 @@
 
 Instant whole-drive file search, built on raw NTFS `$MFT` indexing (the same
 approach voidtools' Everything uses), staying live via the NTFS USN Journal,
-plus a planned delete/edit safety net (see Roadmap). Part of the same family
-as Wraith and Specter.
+plus a 24h delete/edit recovery safety net for Desktop and Documents. Part
+of the same family as Wraith and Specter.
 
 ## Status
 
-Backend proven, UI works, index is live, not yet packaged or feature-complete.
+Backend proven, UI works, index is live, safety net works, not yet packaged.
 Search covers the whole drive and updates in real time as files are created,
-renamed, or deleted (~1s poll interval) — verified against real filesystem
-operations without restarting the app. No undo/recovery yet, no dual-pane
-browsing.
+renamed, or deleted (~1s poll interval). Files changed or deleted in
+Desktop/Documents while Revenant is running are recoverable for 24h via the
+Recovery panel. Both verified against real filesystem operations end-to-end
+through the actual running UI, not just the backend. No dual-pane browsing
+yet.
 
 ## Why this needs admin, unconditionally
 
@@ -89,14 +91,37 @@ still showing up in results, which is what the first version actually did.
 `lib/mft.js` exports `debugRawRecord` for exactly this kind of "what does
 the disk actually say right now" check if this needs revisiting.
 
+## Delete/edit safety net (`lib/snapshots.js`)
+
+Watches Desktop + Documents only (v1 scope — snapshotting every write
+anywhere, build output and browser cache included, would be both wasteful
+and mostly noise nobody wants recovered). Reuses the same USN journal poll
+loop from live updates rather than a second watcher.
+
+The non-obvious part, worth internalizing before touching this code: a
+snapshot is NOT taken reactively "of the old content" when a change is
+detected — by the time we see the event, the old content is already gone,
+overwritten by the new. What actually happens is every detected change
+(debounced ~2s so a burst of writes to one file snapshots once, not
+mid-write) captures the file's *current* content into a growing timeline.
+"Undo the last edit" means restoring the second-newest snapshot, not the
+newest — the newest one IS the edit you're undoing. A delete has nothing new
+to capture; the most recent snapshot already on file (from whenever the file
+was last edited while it existed) is already the recovery point. This means
+recovery only works for changes that happen after Revenant has already
+captured at least one version of that file — the very first edit to a file
+Revenant has never seen has no prior version to fall back to. Both edit
+recovery (restore an older version over a bad edit) and delete recovery
+(restore a deleted file from its last snapshot) verified end-to-end through
+the real running UI: write v1, overwrite to v2, confirm 2 versions tracked,
+restore the older one, confirm content matches v1 exactly — same for delete.
+
 ## Roadmap (see project chat history for full rationale)
 
-- **Delete/edit safety net** — 24h rolling recovery window for both deletes
-  (route through a holding folder) and edits (snapshot on detected change).
-  The USN journal poll loop above is the same subsystem this needs for
-  detecting an edit in time to snapshot the previous version — extend it,
-  don't build a second one.
 - **Dual-pane browsing, tags, "open in Wraith here"** — see project notes.
+- **Configurable watched folders** — Desktop/Documents are hardcoded in
+  `main.js` right now; a Settings panel to add/remove folders is the
+  obvious next step for the safety net specifically.
 - **Packaging** — NSIS installer via `npm run dist` not yet verified for
   this project; `native/mftvol` needs to be included in `build.files` and
   likely `asarUnpack`'d before that'll work (same pattern as `node-pty` in
