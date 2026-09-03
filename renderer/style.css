@@ -69,6 +69,24 @@ html, body {
 }
 .recovery-item button.restore-btn:hover { background: #3a2e58; }
 .recovery-item button.restore-btn:disabled { opacity: 0.5; cursor: default; }
+
+#ctx-menu {
+  position: fixed;
+  z-index: 100;
+  background: #1c1c24;
+  border: 1px solid #33333f;
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 160px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.ctx-item {
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ctx-item:hover { background: #2c2440; color: #c9b8ff; }
 .row {
   display: flex; align-items: baseline; gap: 8px;
   padding: 6px 8px;

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, clipboard } = require('electron');
 const path = require('path');
 const mft = require('./lib/mft');
 const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
@@ -143,6 +143,30 @@ ipcMain.handle('recovery-restore', (e, { id, destPath }) => {
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
+});
+
+// A result is only useful if you can actually do something with it once
+// you've found it — open it, or jump to it in Explorer for anything that
+// needs more than a double-click (rename, drag elsewhere, properties...).
+ipcMain.handle('shell-open-path', async (e, targetPath) => {
+  const err = await shell.openPath(targetPath); // resolves to '' on success, an error string on failure
+  return { ok: !err, error: err || null };
+});
+
+ipcMain.handle('shell-show-in-folder', (e, targetPath) => {
+  shell.showItemInFolder(targetPath);
+  return { ok: true };
+});
+
+// Electron's clipboard module (main process) rather than the renderer's
+// navigator.clipboard — the web API throws NotAllowedError whenever the
+// document isn't focused (confirmed while testing this via CDP, but it's a
+// real everyday case too: right-clicking a background/non-focused window),
+// and it failed *silently*, no error shown to the user. This has no such
+// restriction.
+ipcMain.handle('clipboard-write-text', (e, text) => {
+  clipboard.writeText(text);
+  return { ok: true };
 });
 
 function createWindow() {

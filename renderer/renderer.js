@@ -23,14 +23,59 @@ function renderResults(list) {
   for (const r of list) {
     const row = document.createElement('div');
     row.className = 'row' + (r.isDirectory ? ' dir' : '');
+    row.dataset.path = r.path;
+    row.dataset.isDir = String(!!r.isDirectory);
     row.innerHTML = `
       <span class="tag">${r.isDirectory ? 'dir' : 'file'}</span>
       <span class="path">${r.path.replace(/</g, '&lt;')}</span>
       <span class="size">${humanSize(r.size)}</span>
     `;
+    row.addEventListener('dblclick', () => window.revenant.openPath(r.path));
+    row.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      showContextMenu(ev.clientX, ev.clientY, r);
+    });
     frag.appendChild(row);
   }
   results.appendChild(frag);
+}
+
+function flashMessage(text) {
+  const prev = resultCount.textContent;
+  resultCount.textContent = text;
+  setTimeout(() => { resultCount.textContent = prev; }, 1200);
+}
+
+/* ================= result context menu ================= */
+const ctxMenu = document.createElement('div');
+ctxMenu.id = 'ctx-menu';
+ctxMenu.hidden = true;
+document.body.appendChild(ctxMenu);
+
+function hideContextMenu() { ctxMenu.hidden = true; }
+document.addEventListener('click', hideContextMenu);
+document.addEventListener('scroll', hideContextMenu, true);
+window.addEventListener('blur', hideContextMenu);
+
+function showContextMenu(x, y, r) {
+  const items = [
+    { label: r.isDirectory ? 'Open folder' : 'Open', action: () => window.revenant.openPath(r.path) },
+    { label: 'Show in Explorer', action: () => window.revenant.showInFolder(r.path) },
+    { label: 'Copy path', action: () => window.revenant.copyText(r.path).then(() => flashMessage('Path copied')) }
+  ];
+  ctxMenu.innerHTML = '';
+  for (const item of items) {
+    const el = document.createElement('div');
+    el.className = 'ctx-item';
+    el.textContent = item.label;
+    el.addEventListener('click', () => { item.action(); hideContextMenu(); });
+    ctxMenu.appendChild(el);
+  }
+  ctxMenu.hidden = false;
+  // Clamp so the menu never renders off the right/bottom edge of the window.
+  const rect = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
+  ctxMenu.style.top = `${Math.min(y, window.innerHeight - rect.height - 4)}px`;
 }
 
 let debounceTimer = null;

@@ -7,13 +7,14 @@ of the same family as Wraith and Specter.
 
 ## Status
 
-Backend proven, UI works, index is live, safety net works, not yet packaged.
-Search covers the whole drive and updates in real time as files are created,
-renamed, or deleted (~1s poll interval). Files changed or deleted in
-Desktop/Documents while Revenant is running are recoverable for 24h via the
-Recovery panel. Both verified against real filesystem operations end-to-end
-through the actual running UI, not just the backend. No dual-pane browsing
-yet.
+Backend proven, UI works, index is live, safety net works, results are
+actionable, not yet packaged. Search covers the whole drive and updates in
+real time as files are created, renamed, or deleted (~1s poll interval).
+Files changed or deleted in Desktop/Documents while Revenant is running are
+recoverable for 24h via the Recovery panel. Double-click a result to open
+it, right-click for Open / Show in Explorer / Copy path. All of the above
+verified against real filesystem operations end-to-end through the actual
+running UI, not just the backend. No dual-pane browsing yet.
 
 ## Why this needs admin, unconditionally
 

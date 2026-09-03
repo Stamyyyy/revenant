@@ -8,5 +8,8 @@ contextBridge.exposeInMainWorld('revenant', {
   onIndexLiveUpdate: (cb) => ipcRenderer.on('index-live-update', (_e, data) => cb(data)),
   recoveryList: () => ipcRenderer.invoke('recovery-list'),
   recoveryHistory: (originalPath) => ipcRenderer.invoke('recovery-history', originalPath),
-  recoveryRestore: (id, destPath) => ipcRenderer.invoke('recovery-restore', { id, destPath })
+  recoveryRestore: (id, destPath) => ipcRenderer.invoke('recovery-restore', { id, destPath }),
+  openPath: (targetPath) => ipcRenderer.invoke('shell-open-path', targetPath),
+  showInFolder: (targetPath) => ipcRenderer.invoke('shell-show-in-folder', targetPath),
+  copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text)
 });
