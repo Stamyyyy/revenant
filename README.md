@@ -13,7 +13,9 @@ same family as Wraith, Specter, Phantom, and Séance.
 Backend proven, UI works, index is live, safety net works, results are
 actionable, watched folders are configurable, tags work, directory browsing
 works, house-style parity (tray/hotkey/single-instance/autostart) is in,
-not yet packaged. Search covers the whole drive and updates in real time as
+packaged as a real NSIS installer, and results (and the current folder)
+can be sent to Wraith as a new terminal tab. Search covers the whole drive
+and updates in real time as
 files are created, renamed, or deleted (~1s poll interval) — including
 honest size and modified-date, kept fresh via `fs.statSync` rather than
 stale placeholders. Double-click a folder to browse into it (Revenant's own
@@ -259,11 +261,35 @@ covered). Visual/UX polish (animations, hover feel, whether the browsing UI
 actually *feels* like a good Explorer replacement) was not verified this
 way — that needs an actual look, not a script.
 
-## Roadmap (see project chat history for full rationale)
+## "Open in Wraith here"
 
-- **"Open in Wraith here"** — would need a small change on Wraith's side to
-  accept a starting directory; not yet started.
-- **Packaging** — NSIS installer via `npm run dist` not yet verified for
-  this project; `native/mftvol` needs to be included in `build.files` and
-  likely `asarUnpack`'d before that'll work (same pattern as `node-pty` in
-  Wraith).
+Right-click a result (or a folder in the browse view), or click the `>_`
+button in the address bar for the current folder — either sends the
+directory to Wraith, which opens a new Command Prompt tab starting there. A
+file resolves to its parent directory rather than trying to `cd` into the
+file itself. Implemented via a plain
+`child_process.execFile('Wraith.exe', [dir])` in `main.js`'s
+`open-in-wraith` handler (hardcoded install-path candidates, same
+single-machine assumption Séance's own CLI makes); the receiving half lives
+in Wraith itself, which now accepts a starting directory as a launch
+argument (cold launch) or forwards it through its existing single-instance
+lock's `second-instance` event (already running — a new tab gets added to
+the existing window, nothing second spawns). Verified against real
+processes on both sides: confirmed via each resulting `cmd.exe`'s actual
+working directory (read straight out of its PEB, not just "no errors in
+the log") for a cold launch, a forwarded second-instance call, and a
+file-path-resolves-to-parent-directory case.
+
+## Packaging
+
+`npm run dist` builds a real NSIS installer (`dist/Revenant Setup
+<version>.exe`). `native/mftvol/build/Release/mftvol.node` lives outside
+`node_modules` (it's a local addon, not an npm dependency), so
+electron-builder's default native-module handling would never have found
+it — it's listed explicitly in `build.files` and `build.asarUnpack`.
+`build/icon.ico` is wired into `win.icon` and confirmed present inside
+`app.asar` for the runtime tray/window icon read. Verified by actually
+running the packaged, non-dev `Revenant.exe` (not `electron .`) and
+confirming it indexes and runs clean — proves the native addon loads
+correctly from `app.asar.unpacked`, not just that the build step didn't
+error.

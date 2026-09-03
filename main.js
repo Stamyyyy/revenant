@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, shell, clipboard, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const { execFile } = require('child_process');
 const mft = require('./lib/mft');
 const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
 const { loadSettings, saveSettings } = require('./lib/settings');
@@ -201,6 +203,29 @@ ipcMain.handle('search-query', (e, query) => {
     if (proj) r.seanceProject = proj;
   }
   return { results };
+});
+
+// "Open in Wraith here" — hands a directory to Wraith, which (as of its own
+// matching change) opens a new Command Prompt tab there. Hardcoded paths,
+// not configurable: this is a personal single-user tool wiring itself to
+// another personal single-user tool on the same machine, same assumption
+// seance/cli.js already makes for its own cross-project paths. Tries the
+// real day-to-day install first, falls back to the dev copy's own build.
+const WRAITH_CANDIDATES = [
+  'C:\\Users\\stama\\wraith\\dist\\win-unpacked\\Wraith.exe',
+  'C:\\Users\\stama\\code\\wraith\\dist\\win-unpacked\\Wraith.exe'
+];
+ipcMain.handle('open-in-wraith', (e, targetPath) => {
+  const wraithExe = WRAITH_CANDIDATES.find((p) => fs.existsSync(p));
+  if (!wraithExe) return { ok: false, error: 'Wraith not found' };
+  let dir = targetPath;
+  try {
+    if (!fs.statSync(targetPath).isDirectory()) dir = path.dirname(targetPath);
+  } catch (err) {
+    dir = path.dirname(targetPath); // path already gone — best effort at its last known parent
+  }
+  execFile(wraithExe, [dir], { detached: true, windowsHide: false }, () => {});
+  return { ok: true };
 });
 
 // Sidebar quick-access shortcuts — same set stock Explorer shows by default,

@@ -14,6 +14,7 @@ const settingsPanel = document.getElementById('settings-panel');
 const backBtn = document.getElementById('nav-back');
 const forwardBtn = document.getElementById('nav-forward');
 const upBtn = document.getElementById('nav-up');
+const wraithHereBtn = document.getElementById('wraith-here-btn');
 const breadcrumb = document.getElementById('breadcrumb');
 const pathInput = document.getElementById('path-input');
 const sidebarItems = document.querySelectorAll('.sidebar-item');
@@ -185,6 +186,12 @@ function showContextMenu(x, y, r, tagPillsEl) {
     { label: 'Show in Explorer', action: () => window.revenant.showInFolder(r.path) },
     { label: 'Copy path', action: () => window.revenant.copyText(r.path).then(() => flashMessage('Path copied')) },
     {
+      label: 'Open in Wraith here',
+      action: () => window.revenant.openInWraith(r.path).then((res) => {
+        if (!res.ok) flashMessage(res.error || 'Could not open Wraith');
+      })
+    },
+    {
       label: 'Add tag…',
       // Doesn't close the menu or fire immediately — swaps the menu content
       // into a tag-name input instead. window.prompt() isn't reliably
@@ -334,6 +341,12 @@ sidebarItems.forEach((btn) => {
     const folder = knownFoldersCache && knownFoldersCache[btn.dataset.folder];
     if (folder) navigateTo(folder);
   });
+});
+
+wraithHereBtn.addEventListener('click', async () => {
+  if (!currentPath) return;
+  const res = await window.revenant.openInWraith(currentPath);
+  if (!res.ok) flashMessage(res.error || 'Could not open Wraith');
 });
 
 /* ================= search ================= */
