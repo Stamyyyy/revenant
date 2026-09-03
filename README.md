@@ -1,24 +1,38 @@
 # Revenant
 
-Instant whole-drive file search, built on raw NTFS `$MFT` indexing (the same
-approach voidtools' Everything uses), staying live via the NTFS USN Journal,
-plus a 24h delete/edit recovery safety net for user-chosen folders (Desktop
-+ Documents by default), and tags. Part of the same family as Wraith and
-Specter.
+A stock Windows Explorer replacement: instant whole-drive file search built
+on raw NTFS `$MFT` indexing (the same approach voidtools' Everything uses),
+staying live via the NTFS USN Journal, real in-app folder browsing, a 24h
+delete/edit recovery safety net for user-chosen folders (Desktop + Documents
+by default), and tags. Runs in the tray with a global summon hotkey and
+Start-with-Windows, same conventions as Wraith/Specter/Phantom. Part of the
+same family as Wraith, Specter, Phantom, and Séance.
 
 ## Status
 
 Backend proven, UI works, index is live, safety net works, results are
-actionable, watched folders are configurable, tags work, not yet packaged.
-Search covers the whole drive and updates in real time as files are
-created, renamed, or deleted (~1s poll interval). Files changed or deleted
-in watched folders while Revenant is running are recoverable for 24h via
-the Recovery panel; which folders are watched is editable from the Settings
-panel and takes effect immediately, no restart. Double-click a result to
-open it, right-click for Open / Show in Explorer / Copy path / Add tag —
-tagged files are searchable with `#tagname`. All of the above verified
-against real filesystem operations end-to-end through the
-actual running UI, not just the backend. No dual-pane browsing yet.
+actionable, watched folders are configurable, tags work, directory browsing
+works, house-style parity (tray/hotkey/single-instance/autostart) is in,
+not yet packaged. Search covers the whole drive and updates in real time as
+files are created, renamed, or deleted (~1s poll interval) — including
+honest size and modified-date, kept fresh via `fs.statSync` rather than
+stale placeholders. Double-click a folder to browse into it (Revenant's own
+view, not a hand-off to real Explorer); breadcrumbs, back/forward, a
+Quick-access sidebar (Desktop/Downloads/Documents/Pictures/Music/Videos/This
+PC), and a whole-drive **Recent** tab (most recently modified files, newest
+first) round out the Explorer-replacement side. Files changed or deleted in
+watched folders while Revenant is running are recoverable for 24h via the
+Recovery panel; which folders are watched is editable from the Settings
+panel (also where Start-with-Windows lives) and takes effect immediately,
+no restart. Double-click a result to open it, right-click for Open / Show
+in Explorer / Copy path / Add tag — tagged files are searchable with
+`#tagname`. Files get a type emoji and a colored extension badge. A file
+inside a Séance-tracked project folder gets a read-only badge naming that
+project. All of the above verified against real filesystem operations
+end-to-end — either through the actual running UI, or via standalone
+scripts exercising the same `lib/mft.js` code path against the real volume
+where the running UI couldn't be driven directly (see "Testing notes"
+below).
 
 ## Why this needs admin, unconditionally
 
@@ -150,9 +164,105 @@ context menu, confirm the pill survives a fresh re-search (proves it's
 persisted, not just closure state), search `#tagname` and find it, remove
 via the pill's ×, confirm the tag search comes back empty.
 
+## Directory browsing (the Explorer-replacement part)
+
+Search-only wasn't enough to replace Explorer — you need to answer "what's
+in this folder," and the original index couldn't: it stored each record's
+*parent*, never a folder's *children*. `lib/mft.js` now also maintains
+`childrenIndex` (`Map<parentRecordNum, Set<recordNum>>`), built during the
+initial scan and kept in sync incrementally on every USN journal event
+(create/rename/move/delete), so listing a folder is an O(children) lookup,
+never a scan of the whole ~1.3M-record index. Size and modified-date on a
+live-updated record are refreshed via a normal `fs.statSync` call (not a
+raw volume re-read — that path has the same metadata-flush lag documented
+above for deletes; `fs.statSync` goes through the ordinary cache-coherent
+NTFS path and doesn't have it) rather than left stale. `listChildren` and
+`recordNumForPath` (path → record, by walking `childrenIndex` from the
+root) are what `browse-list` in `main.js` and the renderer's breadcrumbs /
+sidebar / back-forward navigation are built on.
+
+Verified two ways: `listChildren` output diffed directly against
+`fs.readdirSync` + `fs.statSync` on real folders (name, isDirectory, size,
+mtime all matched exactly), and a full live-update lifecycle test — create,
+modify (size actually grows), rename, create a subfolder, move a file
+between parents, delete — each step polled through the real USN journal
+against a real temp folder on the live volume, asserting `childrenIndex`
+and `listChildren` reflect it correctly at every step.
+
+## Recent (`recentFiles` in `lib/mft.js`)
+
+A whole-drive "most recently modified files" tab. Deliberately not a full
+sort of the index (~1.3M records — sorting all of it on every panel open
+would visibly stall the app); a single pass keeps a bounded top-100 set,
+timed at 27ms end-to-end against the real index. Directories are excluded.
+
+## File-type labeling
+
+Each row gets a small category emoji (image/video/audio/archive/installer/
+PDF/spreadsheet/slides/document/code/font, falling back to a plain document
+icon) plus a colored extension badge, drawn from a fixed, hand-picked
+extension table in `renderer/renderer.js` — an unrecognized extension just
+gets the plain fallback, not a crash.
+
+## House-style parity (tray, hotkey, single instance, autostart)
+
+Matches the pattern already established in Wraith's `main.js`, copied
+faithfully rather than reinvented: `requestSingleInstanceLock` (a second
+launch focuses the existing window instead of opening a second raw volume
+handle + USN poll loop against the same snapshot store — a real corruption
+risk, not just waste), a tray icon with Show/Hide + Quit, a global summon
+hotkey (`Ctrl+Alt+R` default, `settings.summonHotkey`), and
+Start-with-Windows via `app.setLoginItemSettings` (toggle lives in the
+Settings panel). The window's own close button hides to tray instead of
+quitting — rebuilding the index on every dismiss would defeat the point of
+keeping it live. `build/icon.ico` is a small hand-generated purple-gradient
+"R" mark (a real PNG-in-ICO file, not a placeholder) since no design asset
+existed for this project yet; Electron's default menu bar is removed and
+the title bar is repainted dark via `titleBarOverlay` rather than left as
+default OS white.
+
+Single-instance lock verified by attempting a second launch while the first
+was running and confirming the process count didn't change (no second
+index/journal/snapshot-store instance spun up).
+
+## Séance integration (read-only)
+
+Revenant runs as a native Windows process; Séance's CLI is npm-linked
+inside WSL. `lib/seance.js` shells out through `wsl.exe` to Séance's own
+`seance status` command (its documented, stable headless interface) and
+parses the project registry it prints — never reads or writes Séance's
+userData files directly, and never touches Séance's own source. A file
+whose path falls under a Séance-tracked project folder gets a small
+read-only badge naming that project. Refreshed once at startup and every 10
+minutes. Verified end-to-end from the real Windows-side process (not just
+the parsing logic) against the real `seance status` output.
+
+Phantom gets no code-level integration: it has no entry point today to
+accept an external file (no CLI args, no protocol handler — checked,
+read-only, nothing added), and Revenant doesn't produce the kind of
+user-facing output that would make the shared `Arsenal` folder convention
+apply the way it does for Phantom's screenshots. In practice the two
+already compose for free — Revenant's whole-drive index covers
+`Arsenal\Screenshots` like any other folder, no special-casing needed.
+
+## Testing notes
+
+Most of this was verified by driving the actual running UI through Chrome
+DevTools Protocol. In the environment this session ran in, CDP's debug port
+wasn't reachable from WSL to the Windows-side Electron process (tried both
+loopback and the WSL gateway IP, with and without binding to `0.0.0.0`) —
+so the directory-browsing, live-update, Recent, and Séance-badge logic were
+instead verified with standalone Node scripts that `require('./lib/mft.js')`
+directly and exercise it against the real volume/real files (see the
+"Directory browsing" and "Recent" sections above for what those checks
+covered). Visual/UX polish (animations, hover feel, whether the browsing UI
+actually *feels* like a good Explorer replacement) was not verified this
+way — that needs an actual look, not a script.
+
 ## Roadmap (see project chat history for full rationale)
 
-- **Dual-pane browsing, "open in Wraith here"** — see project notes.
+- **"Open in Wraith here"** — would need a small change on Wraith's side to
+  accept a starting directory; not yet started.
 - **Packaging** — NSIS installer via `npm run dist` not yet verified for
   this project; `native/mftvol` needs to be included in `build.files` and
   likely `asarUnpack`'d before that'll work (same pattern as `node-pty` in

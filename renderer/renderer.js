@@ -2,10 +2,21 @@ const statusBar = document.getElementById('status-bar');
 const searchBox = document.getElementById('search-box');
 const resultCount = document.getElementById('result-count');
 const results = document.getElementById('results');
+const browsePanel = document.getElementById('browse-panel');
+const listHead = document.getElementById('list-head');
+const addressBar = document.getElementById('address-bar');
+const recentTabBtn = document.getElementById('recent-tab-btn');
+const recentPanel = document.getElementById('recent-panel');
 const recoveryTabBtn = document.getElementById('recovery-tab-btn');
 const recoveryPanel = document.getElementById('recovery-panel');
 const settingsTabBtn = document.getElementById('settings-tab-btn');
 const settingsPanel = document.getElementById('settings-panel');
+const backBtn = document.getElementById('nav-back');
+const forwardBtn = document.getElementById('nav-forward');
+const upBtn = document.getElementById('nav-up');
+const breadcrumb = document.getElementById('breadcrumb');
+const pathInput = document.getElementById('path-input');
+const sidebarItems = document.querySelectorAll('.sidebar-item');
 
 function humanSize(bytes) {
   if (!bytes) return '';
@@ -13,6 +24,46 @@ function humanSize(bytes) {
   let v = bytes, i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+function humanDate(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const datePart = d.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  const timePart = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${datePart} ${timePart}`;
+}
+
+// File-type labeling: a category emoji + a colored extension badge per row,
+// so a folder full of mixed files scans the way a real file manager's icon
+// view does instead of everything looking like flat text. Deliberately a
+// closed, hand-picked set of common extensions rather than trying to cover
+// everything — an unrecognized extension just falls back to a plain document
+// icon with no badge, which is a fine default, not a bug.
+const FILE_TYPES = [
+  { emoji: '\u{1F5BC}\u{FE0F}', color: '#5b9fff', exts: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico', 'avif', 'tiff'] },
+  { emoji: '\u{1F3AC}', color: '#ff6b6b', exts: ['mp4', 'mkv', 'avi', 'mov', 'webm', 'wmv', 'flv', 'm4v'] },
+  { emoji: '\u{1F3B5}', color: '#7fd490', exts: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'wma'] },
+  { emoji: '\u{1F5DC}\u{FE0F}', color: '#e0a45c', exts: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'] },
+  { emoji: '\u{1F4E6}', color: '#e0a45c', exts: ['exe', 'msi', 'msix', 'appx'] },
+  { emoji: '\u{1F4D5}', color: '#ff8080', exts: ['pdf'] },
+  { emoji: '\u{1F4CA}', color: '#7fd490', exts: ['xls', 'xlsx', 'csv', 'ods'] },
+  { emoji: '\u{1F4FD}\u{FE0F}', color: '#e0a45c', exts: ['ppt', 'pptx', 'odp'] },
+  { emoji: '\u{1F4C4}', color: '#9aa8c4', exts: ['doc', 'docx', 'odt', 'rtf', 'txt', 'md'] },
+  { emoji: '\u{1F4BB}', color: '#c9b8ff', exts: ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'html', 'htm', 'css', 'scss', 'less', 'json', 'xml', 'yml', 'yaml', 'sh', 'bat', 'ps1', 'sql'] },
+  { emoji: '\u{1F524}', color: '#c9b8ff', exts: ['ttf', 'otf', 'woff', 'woff2'] }
+];
+const EXT_LOOKUP = new Map();
+for (const t of FILE_TYPES) for (const e of t.exts) EXT_LOOKUP.set(e, t);
+const FOLDER_EMOJI = '\u{1F4C1}';
+const GENERIC_FILE_EMOJI = '\u{1F4C4}';
+
+function fileTypeFor(fileName) {
+  const dot = fileName.lastIndexOf('.');
+  if (dot <= 0 || dot === fileName.length - 1) return null;
+  const ext = fileName.slice(dot + 1).toLowerCase();
+  const match = EXT_LOOKUP.get(ext);
+  return match ? { ext, emoji: match.emoji, color: match.color } : null;
 }
 
 function renderTagPills(container, r) {
@@ -31,6 +82,44 @@ function renderTagPills(container, r) {
   }
 }
 
+// Shared row builder for both search results (label = full path) and
+// directory browsing (label = bare file name) — same underlying result
+// shape ({fileId, path, isDirectory, size, mtime, tags}) either way, so
+// there's no reason to duplicate the row markup, context menu wiring, or
+// tag pills between the two modes.
+function buildRow(r, label) {
+  const row = document.createElement('div');
+  row.className = 'row' + (r.isDirectory ? ' dir' : '');
+  row.dataset.path = r.path;
+  row.dataset.isDir = String(!!r.isDirectory);
+  const fileName = r.path.split(/[\\/]/).pop() || label;
+  const ft = r.isDirectory ? null : fileTypeFor(fileName);
+  const emoji = r.isDirectory ? FOLDER_EMOJI : (ft ? ft.emoji : GENERIC_FILE_EMOJI);
+  const extBadge = ft ? `<span class="ext-badge" style="color:${ft.color};border-color:${ft.color}66">${ft.ext.toUpperCase()}</span>` : '';
+  row.innerHTML = `
+    <span class="tag">${emoji}</span>
+    <span class="path">${label.replace(/</g, '&lt;')}</span>
+    ${extBadge}
+    <span class="tag-pills"></span>
+    ${r.seanceProject ? `<span class="seance-badge" title="Tracked by Séance as &quot;${r.seanceProject.replace(/"/g, '')}&quot;">${r.seanceProject.replace(/</g, '&lt;')}</span>` : ''}
+    <span class="modified">${humanDate(r.mtime)}</span>
+    <span class="size">${humanSize(r.size)}</span>
+  `;
+  renderTagPills(row.querySelector('.tag-pills'), r);
+  row.addEventListener('dblclick', () => {
+    // Directories navigate inside Revenant's own browse view — Revenant is
+    // meant to replace the stock file explorer, not hand off to it the
+    // moment you go two levels deep.
+    if (r.isDirectory) { searchBox.value = ''; navigateTo(r.path); }
+    else window.revenant.openPath(r.path);
+  });
+  row.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    showContextMenu(ev.clientX, ev.clientY, r, row.querySelector('.tag-pills'));
+  });
+  return row;
+}
+
 function renderResults(list) {
   results.innerHTML = '';
   if (list.length === 0) {
@@ -38,26 +127,36 @@ function renderResults(list) {
     return;
   }
   const frag = document.createDocumentFragment();
-  for (const r of list) {
-    const row = document.createElement('div');
-    row.className = 'row' + (r.isDirectory ? ' dir' : '');
-    row.dataset.path = r.path;
-    row.dataset.isDir = String(!!r.isDirectory);
-    row.innerHTML = `
-      <span class="tag">${r.isDirectory ? 'dir' : 'file'}</span>
-      <span class="path">${r.path.replace(/</g, '&lt;')}</span>
-      <span class="tag-pills"></span>
-      <span class="size">${humanSize(r.size)}</span>
-    `;
-    renderTagPills(row.querySelector('.tag-pills'), r);
-    row.addEventListener('dblclick', () => window.revenant.openPath(r.path));
-    row.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      showContextMenu(ev.clientX, ev.clientY, r, row.querySelector('.tag-pills'));
-    });
-    frag.appendChild(row);
-  }
+  for (const r of list) frag.appendChild(buildRow(r, r.path));
   results.appendChild(frag);
+}
+
+let lastBrowseCount = 0;
+function renderBrowseEntries(list) {
+  browsePanel.innerHTML = '';
+  lastBrowseCount = list.length;
+  if (list.length === 0) {
+    browsePanel.innerHTML = '<div class="empty">This folder is empty</div>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const r of list) frag.appendChild(buildRow(r, r.name));
+  browsePanel.appendChild(frag);
+}
+
+// Whole-drive "Recent" view — reuses buildRow (full path as the label, same
+// as search results) so it's just as openable/right-clickable as any other
+// listing: double-click opens it, right-click gives Open / Show in Explorer
+// / Copy path / Add tag, same as everywhere else in the app.
+async function loadRecentPanel() {
+  recentPanel.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await window.revenant.recentFiles();
+  if (res.error) { recentPanel.innerHTML = `<div class="empty">${res.error}</div>`; return; }
+  recentPanel.innerHTML = '';
+  if (res.results.length === 0) { recentPanel.innerHTML = '<div class="empty">Nothing indexed yet</div>'; return; }
+  const frag = document.createDocumentFragment();
+  for (const r of res.results) frag.appendChild(buildRow(r, r.path));
+  recentPanel.appendChild(frag);
 }
 
 function flashMessage(text) {
@@ -79,7 +178,10 @@ window.addEventListener('blur', hideContextMenu);
 
 function showContextMenu(x, y, r, tagPillsEl) {
   const items = [
-    { label: r.isDirectory ? 'Open folder' : 'Open', action: () => window.revenant.openPath(r.path) },
+    {
+      label: r.isDirectory ? 'Open folder' : 'Open',
+      action: () => { if (r.isDirectory) { searchBox.value = ''; navigateTo(r.path); } else window.revenant.openPath(r.path); }
+    },
     { label: 'Show in Explorer', action: () => window.revenant.showInFolder(r.path) },
     { label: 'Copy path', action: () => window.revenant.copyText(r.path).then(() => flashMessage('Path copied')) },
     {
@@ -129,18 +231,134 @@ function showTagInput(tagPillsEl, r) {
   input.focus();
 }
 
+/* ================= directory browsing (Explorer replacement) ================= */
+let knownFoldersCache = null;
+let currentPath = null;
+let historyStack = [];
+let historyIndex = -1;
+
+function renderBreadcrumb(p) {
+  breadcrumb.innerHTML = '';
+  breadcrumb.hidden = false;
+  pathInput.hidden = true;
+  const m = p.match(/^([A-Za-z]):\\?(.*)$/);
+  if (!m) { breadcrumb.textContent = p; return; }
+  const drive = m[1].toUpperCase();
+  const segments = m[2] ? m[2].split('\\').filter(Boolean) : [];
+
+  const addCrumb = (text, fullPath, isLast) => {
+    const el = document.createElement('span');
+    el.className = 'crumb';
+    el.textContent = text;
+    if (!isLast) el.addEventListener('click', (ev) => { ev.stopPropagation(); navigateTo(fullPath); });
+    breadcrumb.appendChild(el);
+  };
+  const addSep = () => {
+    const sep = document.createElement('span');
+    sep.className = 'crumb-sep';
+    sep.textContent = '\u203a';
+    breadcrumb.appendChild(sep);
+  };
+
+  addCrumb(`Local Disk (${drive}:)`, `${drive}:\\`, segments.length === 0);
+  let acc = `${drive}:\\`;
+  segments.forEach((seg, i) => {
+    acc = acc.endsWith('\\') ? `${acc}${seg}` : `${acc}\\${seg}`;
+    addSep();
+    addCrumb(seg, acc, i === segments.length - 1);
+  });
+}
+
+breadcrumb.addEventListener('click', (ev) => {
+  if (ev.target !== breadcrumb) return; // a .crumb itself already handled its own click
+  pathInput.value = currentPath || '';
+  breadcrumb.hidden = true;
+  pathInput.hidden = false;
+  pathInput.focus();
+  pathInput.select();
+});
+pathInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') navigateTo(pathInput.value.trim());
+  else if (ev.key === 'Escape') renderBreadcrumb(currentPath);
+});
+pathInput.addEventListener('blur', () => renderBreadcrumb(currentPath));
+
+function updateSidebarActive() {
+  const norm = (p) => (p || '').toLowerCase().replace(/\\+$/, '');
+  sidebarItems.forEach((btn) => {
+    const folder = knownFoldersCache && knownFoldersCache[btn.dataset.folder];
+    btn.classList.toggle('active', !!folder && norm(folder) === norm(currentPath));
+  });
+}
+
+async function navigateTo(targetPath, opts = {}) {
+  const res = await window.revenant.browseList(targetPath);
+  if (res.error) { flashMessage(res.error); return; }
+  currentPath = res.path;
+  searchBox.value = '';
+  results.hidden = true;
+  browsePanel.hidden = false;
+  renderBreadcrumb(currentPath);
+  renderBrowseEntries(res.entries);
+  resultCount.textContent = `${lastBrowseCount} item${lastBrowseCount === 1 ? '' : 's'}`;
+  updateSidebarActive();
+
+  if (opts.pushHistory !== false) {
+    historyStack = historyStack.slice(0, historyIndex + 1);
+    historyStack.push(currentPath);
+    historyIndex = historyStack.length - 1;
+  }
+  backBtn.disabled = historyIndex <= 0;
+  forwardBtn.disabled = historyIndex >= historyStack.length - 1;
+}
+
+backBtn.addEventListener('click', () => {
+  if (historyIndex > 0) { historyIndex--; navigateTo(historyStack[historyIndex], { pushHistory: false }); }
+});
+forwardBtn.addEventListener('click', () => {
+  if (historyIndex < historyStack.length - 1) { historyIndex++; navigateTo(historyStack[historyIndex], { pushHistory: false }); }
+});
+upBtn.addEventListener('click', () => {
+  if (!currentPath) return;
+  const m = currentPath.match(/^([A-Za-z]:\\)(.*)$/);
+  if (!m) return;
+  const rest = m[2].replace(/\\$/, '');
+  if (!rest) return; // already at the drive root
+  const parts = rest.split('\\');
+  parts.pop();
+  navigateTo(parts.length ? `${m[1]}${parts.join('\\')}` : m[1]);
+});
+
+sidebarItems.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const folder = knownFoldersCache && knownFoldersCache[btn.dataset.folder];
+    if (folder) navigateTo(folder);
+  });
+});
+
+/* ================= search ================= */
 let debounceTimer = null;
 searchBox.addEventListener('input', () => {
   clearTimeout(debounceTimer);
   const q = searchBox.value;
+  if (!q.trim()) {
+    // Empty query: fall back to whatever folder was last browsed, not an
+    // empty screen — search is a filter on top of browsing, not a
+    // separate destination.
+    results.hidden = true;
+    browsePanel.hidden = false;
+    resultCount.textContent = currentPath ? `${lastBrowseCount} item${lastBrowseCount === 1 ? '' : 's'}` : '';
+    return;
+  }
   debounceTimer = setTimeout(async () => {
-    if (!q.trim()) { results.innerHTML = ''; resultCount.textContent = ''; return; }
     const t0 = performance.now();
     const res = await window.revenant.search(q);
     if (res.error) {
       resultCount.textContent = res.error;
       return;
     }
+    results.hidden = false;
+    browsePanel.hidden = true;
     renderResults(res.results);
     resultCount.textContent = `${res.results.length} results in ${(performance.now() - t0).toFixed(0)}ms`;
   }, 80);
@@ -151,7 +369,7 @@ window.revenant.onIndexProgress(({ scanned, total }) => {
   statusBar.textContent = `Indexing C:\\ … ${pct}% (${scanned.toLocaleString()} / ${total.toLocaleString()})`;
 });
 
-window.revenant.onIndexDone(({ error, stats }) => {
+window.revenant.onIndexDone(async ({ error, stats }) => {
   if (error) {
     statusBar.className = 'error';
     statusBar.textContent = `Indexing failed: ${error} — Revenant needs to run as Administrator to read the volume directly.`;
@@ -160,6 +378,8 @@ window.revenant.onIndexDone(({ error, stats }) => {
   statusBar.className = 'ready';
   statusBar.textContent = `${stats.recordCount.toLocaleString()} files/folders indexed in ${(stats.elapsedMs / 1000).toFixed(2)}s — live`;
   searchBox.disabled = false;
+  knownFoldersCache = await window.revenant.knownFolders();
+  await navigateTo(knownFoldersCache.desktop);
   searchBox.focus();
 });
 
@@ -225,12 +445,23 @@ async function loadSettingsPanel() {
   const s = await window.revenant.settingsGet();
   settingsPanel.innerHTML = `
     <div class="settings-section">
+      <h3>Startup</h3>
+      <label class="settings-checkbox">
+        <input type="checkbox" id="start-with-windows" ${s.startWithWindows ? 'checked' : ''}>
+        Start Revenant when Windows starts
+      </label>
+      <p class="settings-hint">Runs minimized to the tray. Press ${(s.summonHotkey || 'Ctrl+Alt+R').replace('CommandOrControl', 'Ctrl')} anytime to show or hide the window.</p>
+    </div>
+    <div class="settings-section">
       <h3>Watched folders</h3>
       <p class="settings-hint">Files changed or deleted in these folders (and their subfolders) are captured for 24h recovery. Everything else on the drive is searchable but not protected — watching the whole drive would mostly capture noise (build output, caches) nobody wants recovered.</p>
       <div id="folder-list"></div>
       <button id="add-folder-btn">+ Add folder…</button>
     </div>
   `;
+  settingsPanel.querySelector('#start-with-windows').addEventListener('change', async (ev) => {
+    await window.revenant.settingsSet({ startWithWindows: ev.target.checked });
+  });
   const list = settingsPanel.querySelector('#folder-list');
   for (const folder of s.watchedFolders) {
     const row = document.createElement('div');
@@ -248,18 +479,30 @@ async function loadSettingsPanel() {
   });
 }
 
-/* ================= panel switching (search / recovery / settings) ================= */
+/* ================= panel switching (search+browse / recovery / settings) ================= */
 function setActivePanel(name) {
+  recentTabBtn.classList.toggle('active', name === 'recent');
   recoveryTabBtn.classList.toggle('active', name === 'recovery');
   settingsTabBtn.classList.toggle('active', name === 'settings');
-  results.hidden = name !== 'search';
+  const isSearchTab = name === 'search';
+  addressBar.hidden = !isSearchTab;
+  listHead.hidden = !(isSearchTab || name === 'recent');
+  const showingSearchResults = isSearchTab && searchBox.value.trim();
+  results.hidden = !(isSearchTab && showingSearchResults);
+  browsePanel.hidden = !(isSearchTab && !showingSearchResults);
+  recentPanel.hidden = name !== 'recent';
   recoveryPanel.hidden = name !== 'recovery';
   settingsPanel.hidden = name !== 'settings';
+  if (name === 'recent') loadRecentPanel();
   if (name === 'recovery') loadRecoveryPanel();
   if (name === 'settings') loadSettingsPanel();
 }
 
 let activePanel = 'search';
+recentTabBtn.addEventListener('click', () => {
+  activePanel = activePanel === 'recent' ? 'search' : 'recent';
+  setActivePanel(activePanel);
+});
 recoveryTabBtn.addEventListener('click', () => {
   activePanel = activePanel === 'recovery' ? 'search' : 'recovery';
   setActivePanel(activePanel);

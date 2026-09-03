@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('revenant', {
   search: (query) => ipcRenderer.invoke('search-query', query),
+  browseList: (targetPath) => ipcRenderer.invoke('browse-list', targetPath),
+  recentFiles: () => ipcRenderer.invoke('recent-files'),
+  knownFolders: () => ipcRenderer.invoke('known-folders'),
   indexStatus: () => ipcRenderer.invoke('index-status'),
   onIndexProgress: (cb) => ipcRenderer.on('index-progress', (_e, data) => cb(data)),
   onIndexDone: (cb) => ipcRenderer.on('index-done', (_e, data) => cb(data)),
@@ -13,6 +16,7 @@ contextBridge.exposeInMainWorld('revenant', {
   showInFolder: (targetPath) => ipcRenderer.invoke('shell-show-in-folder', targetPath),
   copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text),
   settingsGet: () => ipcRenderer.invoke('settings-get'),
+  settingsSet: (patch) => ipcRenderer.invoke('settings-set', patch),
   settingsAddFolder: () => ipcRenderer.invoke('settings-add-folder'),
   settingsRemoveFolder: (folder) => ipcRenderer.invoke('settings-remove-folder', folder),
   tagsAdd: (fileId, tag) => ipcRenderer.invoke('tags-add', { fileId, tag }),

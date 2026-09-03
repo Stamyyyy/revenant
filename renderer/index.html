@@ -6,16 +6,48 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="titlebar">Revenant</div>
   <div id="status-bar">Indexing C:\ …</div>
-  <div id="search-wrap">
-    <input id="search-box" type="text" placeholder="Search the whole drive… (or #tag)" disabled autofocus>
-    <div id="result-count"></div>
-    <button id="recovery-tab-btn" title="Recently changed or deleted files in watched folders, recoverable for 24h">Recovery</button>
-    <button id="settings-tab-btn" title="Choose which folders the safety net watches">Settings</button>
+  <div id="shell">
+    <nav id="sidebar">
+      <div class="sidebar-label">Quick access</div>
+      <button class="sidebar-item" data-folder="desktop"><span class="sidebar-icon">~</span>Desktop</button>
+      <button class="sidebar-item" data-folder="downloads"><span class="sidebar-icon">&darr;</span>Downloads</button>
+      <button class="sidebar-item" data-folder="documents"><span class="sidebar-icon">&equiv;</span>Documents</button>
+      <button class="sidebar-item" data-folder="pictures"><span class="sidebar-icon">&#9642;</span>Pictures</button>
+      <button class="sidebar-item" data-folder="music"><span class="sidebar-icon">&#9834;</span>Music</button>
+      <button class="sidebar-item" data-folder="videos"><span class="sidebar-icon">&#9654;</span>Videos</button>
+      <div class="sidebar-label">This PC</div>
+      <button class="sidebar-item" data-folder="thisPC"><span class="sidebar-icon">C:</span>Local Disk (C:)</button>
+    </nav>
+    <div id="content">
+      <div id="address-bar">
+        <button id="nav-back" class="nav-btn" title="Back" disabled>&larr;</button>
+        <button id="nav-forward" class="nav-btn" title="Forward" disabled>&rarr;</button>
+        <button id="nav-up" class="nav-btn" title="Up">&uarr;</button>
+        <div id="breadcrumb"></div>
+        <input id="path-input" type="text" spellcheck="false" hidden>
+      </div>
+      <div id="search-wrap">
+        <input id="search-box" type="text" placeholder="Search the whole drive… (or #tag)" disabled autofocus>
+        <div id="result-count"></div>
+        <button id="recent-tab-btn" title="Most recently modified files, anywhere on the drive">Recent</button>
+        <button id="recovery-tab-btn" title="Recently changed or deleted files in watched folders, recoverable for 24h">Recovery</button>
+        <button id="settings-tab-btn" title="Choose which folders the safety net watches">Settings</button>
+      </div>
+      <div id="list-head" class="row head">
+        <span class="tag"></span>
+        <span class="path">Name</span>
+        <span class="modified">Date modified</span>
+        <span class="size">Size</span>
+      </div>
+      <div id="results" hidden></div>
+      <div id="browse-panel"></div>
+      <div id="recent-panel" hidden></div>
+      <div id="recovery-panel" hidden></div>
+      <div id="settings-panel" hidden></div>
+    </div>
   </div>
-  <div id="results"></div>
-  <div id="recovery-panel" hidden></div>
-  <div id="settings-panel" hidden></div>
   <script src="renderer.js"></script>
 </body>
 </html>

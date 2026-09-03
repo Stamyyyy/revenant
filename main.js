@@ -1,11 +1,20 @@
-const { app, BrowserWindow, ipcMain, shell, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, shell, clipboard, dialog } = require('electron');
 const path = require('path');
 const mft = require('./lib/mft');
 const { createSnapshotStore, DEBOUNCE_MS } = require('./lib/snapshots');
 const { loadSettings, saveSettings } = require('./lib/settings');
 const { createTagStore } = require('./lib/tags');
+const seanceIntegration = require('./lib/seance');
+
+// Electron's default File/Edit/View/Window/Help menu bar renders as plain
+// unthemed OS chrome above the page — nothing in renderer/style.css can
+// touch it. Revenant doesn't use it (no keyboard-menu-driven actions), so
+// killing it outright removes one of the two "still white" bars.
+Menu.setApplicationMenu(null);
 
 let win = null;
+let tray = null;
+let isQuitting = false; // set once the tray's Quit item (or OS shutdown) actually wants the app gone — the window's own close ('X') button hides to tray instead, same convention as Wraith/Specter/Phantom
 
 // The volume handle stays open for the app's lifetime — live updates poll
 // the USN journal against this same handle, and layout (geometry + $MFT
@@ -13,6 +22,7 @@ let win = null;
 let volumeHandle = null;
 let layout = null;
 let driveIndex = null;
+let driveChildrenIndex = null; // parentRecordNum -> Set<recordNum>, for directory listing (see lib/mft.js)
 let indexError = null;
 let indexingStats = null;
 
@@ -33,6 +43,22 @@ let snapshotStore = null;
 const debounceTimers = new Map(); // path -> Timeout, so a burst of writes to the same file snapshots once, not per-event
 let tagStore = null;
 
+// ---- Séance integration (read-only, badges only) ----
+// See lib/seance.js for why this shells out to the CLI through wsl.exe
+// instead of reading Séance's own userData files directly.
+let seanceProjectFolders = []; // [{ name, winPath }]
+function refreshSeanceProjects() {
+  seanceIntegration.getTrackedFolders((folders) => { seanceProjectFolders = folders; });
+}
+function seanceProjectForPath(p) {
+  const lower = p.toLowerCase();
+  for (const f of seanceProjectFolders) {
+    const prefix = f.winPath.toLowerCase() + '\\';
+    if (lower === f.winPath.toLowerCase() || lower.startsWith(prefix)) return f.name;
+  }
+  return null;
+}
+
 function recomputeWatchedFoldersLower() {
   watchedFoldersLower = settings.watchedFolders.map((p) => p.toLowerCase() + path.sep);
 }
@@ -40,6 +66,21 @@ function recomputeWatchedFoldersLower() {
 function isUnderWatchedFolder(filePath) {
   const lower = filePath.toLowerCase();
   return watchedFoldersLower.some((f) => lower.startsWith(f));
+}
+
+// win.isDestroyed() alone isn't a sufficient guard: a GPU process crash (or
+// the window being hidden right as a send fires) can leave the render frame
+// briefly unreachable while the BrowserWindow wrapper itself still reports
+// not-destroyed — observed directly as a repeating "Render frame was
+// disposed before WebFrameMain could be accessed" log spam once the window
+// started hiding-to-tray instead of being destroyed on close. Checking
+// webContents.isDestroyed() too, plus a try/catch as a last resort, turns
+// that into "skip this one send" instead of noise on every poll tick.
+function sendToRenderer(channel, payload) {
+  if (!win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return;
+  try {
+    win.webContents.send(channel, payload);
+  } catch (err) {}
 }
 
 function scheduleSnapshot(filePath) {
@@ -56,11 +97,11 @@ function startIndexing() {
   try {
     volumeHandle = mft.openVolume('C');
     layout = mft.getMftLayout(volumeHandle);
-    driveIndex = mft.scanIndex(volumeHandle, layout, (scanned, total) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('index-progress', { scanned, total });
-      }
+    const scanResult = mft.scanIndex(volumeHandle, layout, (scanned, total) => {
+      sendToRenderer('index-progress', { scanned, total });
     });
+    driveIndex = scanResult.index;
+    driveChildrenIndex = scanResult.childrenIndex;
     indexingStats = {
       recordCount: driveIndex.size,
       totalRecords: layout.totalRecords,
@@ -74,17 +115,26 @@ function startIndexing() {
     // file browser, since without it there's no whole-drive index to search.
     indexError = String(err && err.message || err);
   }
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('index-done', { error: indexError, stats: indexingStats });
-  }
+  sendToRenderer('index-done', { error: indexError, stats: indexingStats });
+}
+
+const DEFAULT_HOTKEY = 'CommandOrControl+Alt+R';
+
+// Loaded early (before window/tray/hotkey creation, which all depend on it)
+// rather than as part of startSafetyNet, which used to load it — that ran
+// after the window/tray already existed, too late for startWithWindows and
+// the hotkey to take effect on this launch.
+function loadAppSettings() {
+  settingsPath = path.join(app.getPath('userData'), 'settings.json');
+  settings = loadSettings(settingsPath, {
+    watchedFolders: [app.getPath('desktop'), app.getPath('documents')],
+    summonHotkey: DEFAULT_HOTKEY,
+    startWithWindows: false
+  });
+  recomputeWatchedFoldersLower();
 }
 
 function startSafetyNet() {
-  settingsPath = path.join(app.getPath('userData'), 'settings.json');
-  settings = loadSettings(settingsPath, {
-    watchedFolders: [app.getPath('desktop'), app.getPath('documents')]
-  });
-  recomputeWatchedFoldersLower();
   snapshotStore = createSnapshotStore(path.join(app.getPath('userData'), 'snapshots'));
   snapshotStore.purgeExpired();
   setInterval(() => snapshotStore.purgeExpired(), 60 * 60 * 1000);
@@ -97,7 +147,7 @@ function startLiveUpdates() {
   usnCursor = journal.nextUsn; // only care about changes from this point on — the scan above already reflects everything before it
   pollTimer = setInterval(() => {
     try {
-      const { nextUsn, changedCount, records } = mft.pollUsnJournal(volumeHandle, layout, journalId, usnCursor, driveIndex);
+      const { nextUsn, changedCount, records } = mft.pollUsnJournal(volumeHandle, layout, journalId, usnCursor, driveIndex, driveChildrenIndex, 'C');
       usnCursor = nextUsn;
 
       // Safety net: for anything that changed (not deleted — nothing to
@@ -112,8 +162,8 @@ function startLiveUpdates() {
         scheduleSnapshot(currentPath);
       }
 
-      if (changedCount > 0 && win && !win.isDestroyed()) {
-        win.webContents.send('index-live-update', { changedCount, recordCount: driveIndex.size });
+      if (changedCount > 0) {
+        sendToRenderer('index-live-update', { changedCount, recordCount: driveIndex.size });
       }
     } catch (err) {
       // A single failed poll (e.g. a transient volume hiccup) shouldn't kill
@@ -123,6 +173,7 @@ function startLiveUpdates() {
 }
 
 app.on('before-quit', () => {
+  isQuitting = true;
   if (pollTimer) clearInterval(pollTimer);
   if (volumeHandle !== null) mft.closeVolume(volumeHandle);
 });
@@ -144,7 +195,57 @@ ipcMain.handle('search-query', (e, query) => {
     results = mft.search(driveIndex, q, 'C', 200);
   }
 
-  for (const r of results) r.tags = tagStore.getTags(r.fileId);
+  for (const r of results) {
+    r.tags = tagStore.getTags(r.fileId);
+    const proj = seanceProjectForPath(r.path);
+    if (proj) r.seanceProject = proj;
+  }
+  return { results };
+});
+
+// Sidebar quick-access shortcuts — same set stock Explorer shows by default,
+// resolved via Electron's own app.getPath() rather than hardcoded, so they're
+// correct for whatever account this runs under.
+ipcMain.handle('known-folders', () => ({
+  desktop: app.getPath('desktop'),
+  downloads: app.getPath('downloads'),
+  documents: app.getPath('documents'),
+  pictures: app.getPath('pictures'),
+  music: app.getPath('music'),
+  videos: app.getPath('videos'),
+  thisPC: 'C:\\'
+}));
+
+// Directory browsing: lists the direct children of a folder path (defaults
+// to the drive root). Breadcrumbs, double-click-to-descend, back/forward and
+// a typed address bar in the renderer all funnel through this one handler —
+// they only differ in which path string they pass, browse-list resolves it
+// to a record fresh each call rather than the renderer tracking record
+// numbers itself.
+ipcMain.handle('browse-list', (e, targetPath) => {
+  if (!driveIndex) return { error: indexError || 'index not ready' };
+  const p = (targetPath && targetPath.trim()) || 'C:\\';
+  const recordNum = mft.recordNumForPath(driveIndex, driveChildrenIndex, 'C', p);
+  if (recordNum === null) return { error: `Not found: ${p}` };
+  const normalizedPath = recordNum === 5 ? 'C:\\' : mft.resolvePath(driveIndex, recordNum, 'C');
+  if (!normalizedPath) return { error: 'That folder no longer exists' };
+  const entries = mft.listChildren(driveIndex, driveChildrenIndex, recordNum, normalizedPath);
+  for (const en of entries) {
+    en.tags = tagStore.getTags(en.fileId);
+    const proj = seanceProjectForPath(en.path);
+    if (proj) en.seanceProject = proj;
+  }
+  return { path: normalizedPath, recordNum, entries };
+});
+
+ipcMain.handle('recent-files', () => {
+  if (!driveIndex) return { error: indexError || 'index not ready' };
+  const results = mft.recentFiles(driveIndex, 'C', 100);
+  for (const r of results) {
+    r.tags = tagStore.getTags(r.fileId);
+    const proj = seanceProjectForPath(r.path);
+    if (proj) r.seanceProject = proj;
+  }
   return { results };
 });
 
@@ -222,25 +323,123 @@ ipcMain.handle('settings-remove-folder', (e, folder) => {
   return { ok: true, watchedFolders: settings.watchedFolders };
 });
 
+// No icon.ico exists for Revenant yet (Wraith/Phantom each have their own
+// under build/) — nativeImage.createFromPath on a missing file returns an
+// empty image rather than throwing, so this degrades to Electron/tray
+// defaults instead of crashing until one's added.
+function appIcon() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.ico'));
+  return icon.isEmpty() ? null : icon;
+}
+
 function createWindow() {
+  const icon = appIcon();
   win = new BrowserWindow({
     width: 900,
     height: 640,
     backgroundColor: '#14141a',
+    // Keeps the native minimize/maximize/close buttons (unlike frame:false,
+    // which would mean hand-rolling window dragging and those buttons from
+    // scratch) but repaints the title bar strip itself to match the theme
+    // instead of the default OS white. Windows-only API; other platforms
+    // just ignore titleBarOverlay and get the normal title bar.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#1c1c24', symbolColor: '#c9b8ff', height: 32 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
-    }
+    },
+    ...(icon ? { icon } : {})
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // The X button hides to tray, same as Wraith/Specter/Phantom — a search
+  // index this expensive to build (raw MFT scan + a live USN journal handle)
+  // isn't something you want torn down and rebuilt every time the window is
+  // dismissed. Only the tray's own Quit (or an OS shutdown) actually exits.
+  win.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    win.hide();
+  });
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  startIndexing();
+function showWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  win.show();
+  win.focus();
+}
+
+function toggleWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  if (win.isVisible() && !win.isMinimized()) win.hide();
+  else showWindow();
+}
+
+function createTray() {
+  const icon = appIcon();
+  tray = new Tray(icon ? icon.resize({ width: 16, height: 16 }) : nativeImage.createEmpty());
+  tray.setToolTip('Revenant');
+  const menu = Menu.buildFromTemplate([
+    { label: 'Show / Hide', click: () => toggleWindow() },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('click', () => toggleWindow());
+}
+
+ipcMain.handle('settings-set', (e, patch) => {
+  settings = Object.assign({}, settings, patch);
+  saveSettings(settingsPath, settings);
+  if (typeof patch.startWithWindows === 'boolean') {
+    app.setLoginItemSettings({ openAtLogin: patch.startWithWindows });
+  }
+  return settings;
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Enforce single instance: a second launch just focuses the existing window
+// instead of opening a second raw volume handle + USN journal poll loop
+// alongside the first — two of those writing the same snapshot store is a
+// real corruption risk, not just wasted resources.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    showWindow();
+  });
+
+  app.whenReady().then(() => {
+    loadAppSettings();
+    createWindow();
+    createTray();
+
+    globalShortcut.register(settings.summonHotkey || DEFAULT_HOTKEY, () => {
+      toggleWindow();
+    });
+
+    if (settings.startWithWindows) {
+      app.setLoginItemSettings({ openAtLogin: true });
+    }
+
+    startIndexing();
+
+    refreshSeanceProjects();
+    setInterval(refreshSeanceProjects, 10 * 60 * 1000);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else showWindow();
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    // Keep running in the tray — same convention as the rest of the family.
+  });
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+  });
+}
