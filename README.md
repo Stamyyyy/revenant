@@ -30,7 +30,12 @@ no restart. Double-click a result to open it, right-click for Open / Show
 in Explorer / Copy path / Add tag — tagged files are searchable with
 `#tagname`. Files get a type emoji and a colored extension badge. A file
 inside a Séance-tracked project folder gets a read-only badge naming that
-project. All of the above verified against real filesystem operations
+project. A "This PC" panel shows every local drive as a capacity-bar tile,
+Explorer-style, with `C:` opening in Revenant's own view and every other
+drive handed off to real Explorer. Store writes (settings/tags/snapshots)
+are atomic, a corrupted MFT record is skipped rather than aborting the
+whole index, and orphaned snapshot blobs self-heal on purge. All of the
+above verified against real filesystem operations
 end-to-end — either through the actual running UI, or via standalone
 scripts exercising the same `lib/mft.js` code path against the real volume
 where the running UI couldn't be driven directly (see "Testing notes"
@@ -226,6 +231,62 @@ default OS white.
 Single-instance lock verified by attempting a second launch while the first
 was running and confirming the process count didn't change (no second
 index/journal/snapshot-store instance spun up).
+
+## "This PC" panel
+
+A dedicated sidebar panel, separate from the `C:` shortcut, showing every
+local drive as a tile: capacity bar (green/amber/red past 75%/90% used),
+label, and free-of-total space — the same information Explorer's own "This
+PC" page shows. Drive data comes from PowerShell's `Get-Volume` (real
+label, size, free space, drive type), with a pure-Node `fs.statfsSync`
+fallback (no label, but still real numbers) if PowerShell is unavailable.
+Clicking the `C:` tile opens it in Revenant's own browse view; every other
+drive hands off to the real Explorer via `shell.openPath`, since Revenant's
+index is a single-volume raw `$MFT` scan of `C:` only — it can't browse
+other drives itself, so this avoids pretending otherwise with an
+empty/broken listing.
+
+Verified with isolated logic tests: the PowerShell single-object-vs-array
+JSON normalization, the drive-letter filter, and the capacity-bar threshold
+math. Not yet visually verified in a running Electron window — this WSL
+sandbox has no Electron GUI and no real drives to enumerate, so the actual
+drive tiles and layout need confirming on the real Windows machine.
+
+## Crash resilience and data integrity
+
+A full pass over every place Revenant persists or trusts on-disk data,
+looking specifically for corruption paths a crash or bad input could hit:
+
+- `settings.js`, `tags.js`, and `snapshots.js` all previously wrote their
+  JSON stores with a direct `fs.writeFileSync`, so a crash mid-write could
+  truncate the file — and the loader's catch-and-reset turned that into
+  permanent, silent data loss. All three now go through a shared
+  `lib/atomic-write.js` helper (write to a temp file, then rename, with
+  retry on transient Windows `EPERM`/`EBUSY`), verified against the real,
+  OneDrive-synced AppData path before relying on it.
+- `mft.js`'s `scanIndex()` now wraps each record's `parseRecord()` call in
+  a try/catch: `parseRecord` trusts on-disk offset fields, so one corrupted
+  MFT record among millions could otherwise abort the entire index build.
+  It's now skipped and counted instead, with the count surfaced in the
+  status bar rather than swallowed.
+- `snapshots.js`'s `purgeExpired()` gained an orphan-blob sweep: the
+  snapshot blob is written to disk before it's recorded in `meta`, so a
+  crash in that gap used to leak the blob forever (`purgeExpired` only ever
+  walked `meta`). The sweep self-heals this on every hourly purge.
+- `filetimeToMs()` in `mft.js` now clamps FILETIMEs to a sane range. A
+  corrupted record with a garbage future timestamp would otherwise sort to
+  the top of the Recent list and stay pinned there permanently, since
+  `recentFiles` sorts descending on mtime.
+- The `open-in-wraith` IPC handler in `main.js` now actually waits on the
+  `execFile` spawn's error event before responding, instead of returning
+  `{ ok: true }` unconditionally right after issuing the spawn.
+
+Verified with real round-trip tests (temp dirs, not mocks): atomic write
+survives repeated writes with no leftover tmp files, tag/snapshot stores
+persist correctly through it, and the orphan sweep removes an unreferenced
+blob while keeping a referenced one. The `scanIndex`/`parseRecord` throw
+path is confirmed structurally here; exercising it against a genuinely
+corrupted MFT record needs the real Windows box.
 
 ## Séance integration (read-only)
 
